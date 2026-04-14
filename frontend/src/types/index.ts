@@ -2,6 +2,7 @@ export type AgentType = "CoTAgent" | "SCAgent" | "DebateAgent" | "ReflexionAgent
 export type AgentStatus = "pending" | "running" | "completed" | "failed";
 export type DomLevel = "low" | "high";
 export type Dataset = "aime" | "hotpot" | "browsecomp";
+export type Mode = "custom" | Dataset;
 export type Stage = "input" | "plan" | "execute" | "result";
 export type SubagentModel = "gpt-4.1-mini" | "gpt-4.1" | "o4-mini";
 
@@ -9,6 +10,13 @@ export const DATASETS: { value: Dataset; label: string; dom: DomLevel }[] = [
   { value: "aime", label: "AIME 2024/2025 (Low)", dom: "low" },
   { value: "hotpot", label: "HotpotQA (High)", dom: "high" },
   { value: "browsecomp", label: "BrowseComp (High)", dom: "high" },
+];
+
+export const MODES: { value: Mode; label: string }[] = [
+  { value: "custom", label: "Custom Problem" },
+  { value: "aime", label: "AIME 2024/2025" },
+  { value: "hotpot", label: "HotpotQA" },
+  { value: "browsecomp", label: "BrowseComp" },
 ];
 
 export const SUBAGENT_MODELS: { value: SubagentModel; label: string }[] = [

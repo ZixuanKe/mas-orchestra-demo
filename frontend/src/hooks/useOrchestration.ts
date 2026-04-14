@@ -1,11 +1,13 @@
 import { useState, useCallback } from "react";
-import type { Graph, AgentState, Dataset, Plan, Stage, SubagentModel } from "../types";
+import type { Graph, AgentState, Dataset, DomLevel, Plan, Stage, SubagentModel } from "../types";
+import { track } from "../analytics";
 
 interface State {
   stage: Stage;
   problem: string;
   expectedAnswer: string;
-  dataset: Dataset;
+  dataset: Dataset | null;
+  dom: DomLevel;
   subagentModel: SubagentModel;
   plan: Plan | null;
   graph: Graph | null;
@@ -19,7 +21,8 @@ const initial: State = {
   stage: "input",
   problem: "",
   expectedAnswer: "",
-  dataset: "hotpot",
+  dataset: null,
+  dom: "high",
   subagentModel: "gpt-4.1-mini",
   plan: null,
   graph: null,
@@ -32,13 +35,15 @@ const initial: State = {
 export function useOrchestration() {
   const [state, setState] = useState<State>(initial);
 
-  const generatePlan = useCallback(async (problem: string, dataset: Dataset, expectedAnswer: string) => {
-    setState(s => ({ ...s, problem, dataset, expectedAnswer, isLoading: true, error: null }));
+  const generatePlan = useCallback(async (problem: string, dataset: Dataset | null, dom: DomLevel, expectedAnswer: string) => {
+    setState(s => ({ ...s, problem, dataset, dom, expectedAnswer, isLoading: true, error: null }));
+    track("plan_generated", { mode: dataset ?? "custom", dom, problem_length: problem.length });
     try {
+      const body = dataset ? { problem, dataset } : { problem, dom };
       const res = await fetch("/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ problem, dataset }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`Plan failed: ${res.status}`);
       const plan: Plan = await res.json();
@@ -51,6 +56,7 @@ export function useOrchestration() {
 
   const executePlan = useCallback(async () => {
     if (!state.plan) return;
+    track("execute_started", { agent_count: state.plan.graph.agents.length, subagent_model: state.subagentModel });
     setState(s => ({ ...s, stage: "execute", isLoading: true, error: null }));
     try {
       const res = await fetch("/execute", {

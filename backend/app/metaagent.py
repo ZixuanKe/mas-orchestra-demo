@@ -15,10 +15,14 @@ def get_vllm_client() -> AsyncOpenAI:
     return _vllm_client
 
 
-async def call_metaagent(problem: str, dataset: Dataset) -> str:
-    meta = DATASET_META[dataset]
-    dom: DomLevel = meta["dom"]
-    model: str = meta["vllm_model"]
+DEFAULT_CUSTOM_MODEL = {DomLevel.LOW: "math", DomLevel.HIGH: "hotpotqa"}
+
+
+async def call_metaagent(problem: str, dataset: Dataset | None, dom: DomLevel) -> str:
+    if dataset is not None:
+        model: str = DATASET_META[dataset]["vllm_model"]
+    else:
+        model = DEFAULT_CUSTOM_MODEL[dom]
     messages = build_math_messages(problem) if dom == DomLevel.LOW else build_mas_messages(problem)
 
     try:

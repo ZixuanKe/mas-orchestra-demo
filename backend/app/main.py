@@ -5,24 +5,31 @@ load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 import asyncio
 import json
 import re
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
-from .models import Graph, Dataset, DATASET_META
+from .models import Graph, Dataset, DATASET_META, DomLevel
 from .datasets import get_samples
 from .parser import parse, topo_sort
 from .metaagent import call_metaagent
 from .executor import execute_agent
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="MAS-Orchestra Demo")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
 class PlanRequest(BaseModel):
     problem: str
-    dataset: Dataset = Dataset.HOTPOT
+    dataset: Dataset | None = None
+    dom: DomLevel | None = None
 
 
 class PlanResponse(BaseModel):
@@ -42,12 +49,16 @@ def sse(event: str, data: dict) -> dict:
 
 
 @app.post("/plan")
-async def plan(req: PlanRequest) -> PlanResponse:
-    xml = await call_metaagent(req.problem, req.dataset)
+@limiter.limit("10/hour")
+async def plan(request: Request, req: PlanRequest) -> PlanResponse:
+    if req.dataset is not None:
+        dom_level = DATASET_META[req.dataset]["dom"]
+    else:
+        dom_level = req.dom or DomLevel.HIGH
+    xml = await call_metaagent(req.problem, req.dataset, dom_level)
     match = re.search(r"<thinking>(.*?)</thinking>", xml, re.DOTALL | re.IGNORECASE)
     thinking = match.group(1).strip() if match else None
-    dom_level = DATASET_META[req.dataset]["dom"].value
-    graph = parse(xml, dom_level)
+    graph = parse(xml, dom_level.value)
     return PlanResponse(xml=xml, graph=graph.model_dump(), thinking=thinking)
 
 
@@ -96,7 +107,8 @@ async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "g
 
 
 @app.post("/execute")
-async def execute(req: ExecuteRequest):
+@limiter.limit("10/hour")
+async def execute(request: Request, req: ExecuteRequest):
     return EventSourceResponse(run_execution(req.problem, req.graph, req.subagent_model))
 
 

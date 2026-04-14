@@ -3,8 +3,8 @@ import { useOrchestration } from "./hooks/useOrchestration";
 import { GraphViewer } from "./components/GraphViewer";
 import { AgentOutputs } from "./components/AgentOutputs";
 import { DatasetPicker } from "./components/DatasetPicker";
-import type { Dataset, Stage, SubagentModel } from "./types";
-import { DATASETS, SUBAGENT_MODELS } from "./types";
+import type { Dataset, DomLevel, Mode, Stage, SubagentModel } from "./types";
+import { DATASETS, MODES, SUBAGENT_MODELS } from "./types";
 
 const STAGES: Stage[] = ["input", "plan", "execute", "result"];
 
@@ -51,7 +51,7 @@ const PaperIcon = () => (
 
 export default function App() {
   const { stage, expectedAnswer, plan, graph, agentStates, finalAnswer, error, isLoading, subagentModel, generatePlan, executePlan, setSubagentModel, goToStage, reset } = useOrchestration();
-  const [input, setInput] = useState({ problem: "", expected: "", dataset: "hotpot" as Dataset });
+  const [input, setInput] = useState({ problem: "", expected: "", mode: "custom" as Mode, dom: "high" as DomLevel });
 
   const isDirect = plan?.graph.direct_solution != null;
   const canSelect = (s: Stage) => {
@@ -110,12 +110,30 @@ export default function App() {
             </div>
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-gray-700">Dataset</label>
-                <select value={input.dataset} onChange={e => setInput(s => ({ ...s, dataset: e.target.value as Dataset }))} className="px-3 py-1.5 border rounded-lg text-sm">
-                  {DATASETS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                <label className="text-sm font-medium text-gray-700">Mode</label>
+                <select value={input.mode} onChange={e => setInput(s => ({ ...s, mode: e.target.value as Mode }))} className="px-3 py-1.5 border rounded-lg text-sm">
+                  {MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
-              <DatasetPicker dataset={input.dataset} onSelect={(question, answer) => setInput(s => ({ ...s, problem: question, expected: answer }))} />
+              {input.mode === "custom" ? (
+                <div className="flex items-center gap-4 p-3 bg-gray-50 border rounded-lg">
+                  <span className="text-sm font-medium text-gray-700">Depth of Modularity</span>
+                  <div className="flex gap-1 p-0.5 bg-white border rounded-md">
+                    {(["low", "high"] as DomLevel[]).map(d => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setInput(s => ({ ...s, dom: d }))}
+                        className={`px-3 py-1 text-xs font-medium rounded capitalize transition-colors ${input.dom === d ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                      >
+                        {d} {d === "low" ? "(≤1 agent)" : "(multi-agent)"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <DatasetPicker dataset={input.mode as Dataset} onSelect={(question, answer) => setInput(s => ({ ...s, problem: question, expected: answer }))} />
+              )}
             </div>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -124,7 +142,12 @@ export default function App() {
                   {SUBAGENT_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
-              <button onClick={() => input.problem.trim() && generatePlan(input.problem.trim(), input.dataset, input.expected.trim())}
+              <button onClick={() => {
+                if (!input.problem.trim()) return;
+                const dataset = input.mode === "custom" ? null : (input.mode as Dataset);
+                const dom = dataset ? (DATASETS.find(d => d.value === dataset)?.dom ?? "high") : input.dom;
+                generatePlan(input.problem.trim(), dataset, dom, input.expected.trim());
+              }}
                 disabled={!input.problem.trim() || isLoading} className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300">
                 {isLoading ? "Generating..." : "Generate Plan →"}
               </button>
