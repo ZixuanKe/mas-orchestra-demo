@@ -117,7 +117,7 @@ export default function App() {
               </div>
               {input.mode === "custom" ? (
                 <div className="flex items-center gap-4 p-3 bg-gray-50 border rounded-lg">
-                  <span className="text-sm font-medium text-gray-700">Depth of Modularity</span>
+                  <span className="text-sm font-medium text-gray-700">Degree of MAS (DoM)</span>
                   <div className="flex gap-1 p-0.5 bg-white border rounded-md">
                     {(["low", "high"] as DomLevel[]).map(d => (
                       <button
@@ -178,10 +178,18 @@ export default function App() {
                 <h3 className="text-sm font-medium text-gray-500 mb-2">Agents ({plan.graph.agents.length})</h3>
                 <div className="space-y-2">
                   {plan.graph.agents.map(a => (
-                    <div key={a.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                      <code className="text-sm font-mono text-gray-800">{a.id}</code>
-                      <Badge type={a.type} />
-                      <span className="text-sm text-gray-600 truncate">{a.description}</span>
+                    <div key={a.id} className="p-3 bg-gray-50 rounded-lg space-y-2">
+                      <div className="flex items-center gap-3">
+                        <code className="text-sm font-mono text-gray-800">{a.id}</code>
+                        <Badge type={a.type} />
+                        <span className="text-sm text-gray-600">{a.description}</span>
+                      </div>
+                      {a.input && (
+                        <div className="pl-2 border-l-2 border-gray-200">
+                          <div className="text-xs font-medium text-gray-500 mb-0.5">Input</div>
+                          <code className="text-xs text-gray-700 whitespace-pre-wrap break-words block">{a.input}</code>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
