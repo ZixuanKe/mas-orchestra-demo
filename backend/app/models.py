@@ -5,6 +5,7 @@ from enum import Enum
 class DomLevel(str, Enum):
     LOW = "low"
     HIGH = "high"
+    HIGH_EXTENSIVE = "high_extensive"
 
 
 class Dataset(str, Enum):

@@ -4,7 +4,7 @@ import { GraphViewer } from "./components/GraphViewer";
 import { AgentOutputs } from "./components/AgentOutputs";
 import { DatasetPicker } from "./components/DatasetPicker";
 import type { Dataset, DomLevel, Mode, Stage, SubagentModel } from "./types";
-import { DATASETS, MODES, SUBAGENT_MODELS } from "./types";
+import { AGENT_POOL, DATASETS, DOM_OPTIONS, MODES, SUBAGENT_MODELS } from "./types";
 
 const STAGES: Stage[] = ["input", "plan", "execute", "result"];
 
@@ -49,6 +49,13 @@ const PaperIcon = () => (
   </svg>
 );
 
+const GlobeIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20" />
+  </svg>
+);
+
 export default function App() {
   const { stage, expectedAnswer, plan, graph, agentStates, finalAnswer, error, isLoading, subagentModel, generatePlan, executePlan, setSubagentModel, goToStage, reset } = useOrchestration();
   const [input, setInput] = useState({ problem: "", expected: "", mode: "custom" as Mode, dom: "high" as DomLevel });
@@ -79,6 +86,10 @@ export default function App() {
               <a href="https://arxiv.org/abs/2601.14652" target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border rounded-lg hover:bg-gray-50">
                 <PaperIcon /> Paper
+              </a>
+              <a href="https://vincent950129.github.io/mas-design/mas_r1/" target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border rounded-lg hover:bg-gray-50">
+                <GlobeIcon /> Project
               </a>
             </div>
           </div>
@@ -116,17 +127,17 @@ export default function App() {
                 </select>
               </div>
               {input.mode === "custom" ? (
-                <div className="flex items-center gap-4 p-3 bg-gray-50 border rounded-lg">
+                <div className="flex flex-wrap items-center gap-3 p-3 bg-gray-50 border rounded-lg">
                   <span className="text-sm font-medium text-gray-700">Degree of MAS (DoM)</span>
                   <div className="flex gap-1 p-0.5 bg-white border rounded-md">
-                    {(["low", "high"] as DomLevel[]).map(d => (
+                    {DOM_OPTIONS.map(d => (
                       <button
-                        key={d}
+                        key={d.value}
                         type="button"
-                        onClick={() => setInput(s => ({ ...s, dom: d }))}
-                        className={`px-3 py-1 text-xs font-medium rounded capitalize transition-colors ${input.dom === d ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                        onClick={() => setInput(s => ({ ...s, dom: d.value }))}
+                        className={`px-3 py-1 text-xs font-medium rounded transition-colors ${input.dom === d.value ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
                       >
-                        {d} {d === "low" ? "(≤1 agent)" : "(multi-agent)"}
+                        {d.label}{d.hint && <span className={input.dom === d.value ? "text-blue-100" : "text-gray-400"}> ({d.hint})</span>}
                       </button>
                     ))}
                   </div>
@@ -135,6 +146,19 @@ export default function App() {
                 <DatasetPicker dataset={input.mode as Dataset} onSelect={(question, answer) => setInput(s => ({ ...s, problem: question, expected: answer }))} />
               )}
             </div>
+            <details className="border rounded-lg">
+              <summary className="px-3 py-2 text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 select-none">
+                Agent Pool ({AGENT_POOL.length})
+              </summary>
+              <div className="px-3 py-2 border-t space-y-2">
+                {AGENT_POOL.map(a => (
+                  <div key={a.type} className="flex items-start gap-3">
+                    <Badge type={a.type} />
+                    <span className="text-sm text-gray-600">{a.description}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <label className="text-sm font-medium text-gray-700">Sub-agent Model</label>

@@ -15,7 +15,11 @@ def get_vllm_client() -> AsyncOpenAI:
     return _vllm_client
 
 
-DEFAULT_CUSTOM_MODEL = {DomLevel.LOW: "math", DomLevel.HIGH: "hotpotqa"}
+DEFAULT_CUSTOM_MODEL = {
+    DomLevel.LOW: "math",
+    DomLevel.HIGH: "hotpotqa",
+    DomLevel.HIGH_EXTENSIVE: "browsecomp",
+}
 
 
 async def call_metaagent(problem: str, dataset: Dataset | None, dom: DomLevel) -> str:

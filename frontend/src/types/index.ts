@@ -1,6 +1,20 @@
 export type AgentType = "CoTAgent" | "SCAgent" | "DebateAgent" | "ReflexionAgent" | "WebSearchAgent";
 export type AgentStatus = "pending" | "running" | "completed" | "failed";
-export type DomLevel = "low" | "high";
+export type DomLevel = "low" | "high" | "high_extensive";
+
+export const DOM_OPTIONS: { value: DomLevel; label: string; hint: string }[] = [
+  { value: "low", label: "Low", hint: "≤1 agent" },
+  { value: "high", label: "High", hint: "" },
+  { value: "high_extensive", label: "High (extensive)", hint: "" },
+];
+
+export const AGENT_POOL: { type: string; description: string }[] = [
+  { type: "CoTAgent", description: "Chain-of-Thought reasoning, step by step." },
+  { type: "SCAgent", description: "Self-consistency: samples multiple reasoning paths and majority-votes." },
+  { type: "DebateAgent", description: "Multiple agents debate to refine an answer." },
+  { type: "ReflexionAgent", description: "Reflects on prior outputs to revise the answer." },
+  { type: "WebSearchAgent", description: "Retrieves recent factual information from the web." },
+];
 export type Dataset = "aime" | "hotpot" | "browsecomp";
 export type Mode = "custom" | Dataset;
 export type Stage = "input" | "plan" | "execute" | "result";
