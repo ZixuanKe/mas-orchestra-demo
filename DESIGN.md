@@ -37,7 +37,412 @@ archetypes (CoT, SC, Debate, Reflexion, WebSearch) + provider-native tools
 `computer_use`) + MCP-discovered tools + ad-hoc custom agents (system prompt + tool refs). The LLM can only propose things the system can actually execute.
 
 
-## Frontend
+
+
+## Frontend+ (https://github.com/ZixuanKe/mas-orchestra-demo/blob/main/mock.html)
+
+### 1. Visual identity — tokens
+
+The current UI defaults to `bg-gray-50` + white cards + system fonts,
+which is exactly what makes it feel generic. The fix is a concrete
+design system, wired to CSS variables in `index.css` and a single
+export of palette constants from `types/index.ts` so `App.tsx`,
+`GraphViewer.tsx`, and `AgentOutputs.tsx` pull from one source (today
+they hard-code slightly-different palettes).
+
+**Color tokens** (dark by default; light variant swaps `--ink-*` for
+off-whites):
+
+```css
+:root {
+  /* surface */
+  --ink-0: #07081a;   /* page base */
+  --ink-1: #0b0f26;   /* body gradient stop */
+  --ink-2: #121735;   /* card body */
+  --ink-3: #1c2450;   /* card active */
+  --line:  rgba(255,255,255,0.08);
+
+  /* text */
+  --text:  #e8ebff;
+  --muted: #8791b8;
+  --dim:   #4a527a;
+
+  /* accents */
+  --gold:   #e8b547;  /* primary "conductor" */
+  --gold-2: #ffd27a;  /* highlight */
+  --violet: #6f7bff;  /* supporting */
+  --mint:   #59e3a7;  /* success */
+  --rose:   #ff7a9c;  /* error */
+
+  /* agents — single source of truth for badges, graph, legend */
+  --cot:    #6ea8ff;
+  --sc:     #b28bff;
+  --debate: #ffb453;
+  --reflex: #5be3b8;
+  --web:    #ff7a9c;
+}
+```
+
+**Typography** (from Google Fonts):
+
+- Display — `Instrument Serif`, italic for hero and stage titles. Gives
+  the page an editorial, research-paper feel that matches the project's
+  academic framing.
+- Body — `Manrope` 300–700. Warm humanist sans, readable at every size.
+- Mono — `JetBrains Mono`. Used for agent IDs, durations, token counts,
+  XML, the rail labels, and every metadata row.
+
+Avoid `Inter` / `Roboto` / system fonts — they're what make the current
+UI indistinguishable from generic dashboards.
+
+### 2. The background, which is currently doing nothing
+
+Replace flat `bg-gray-50` with a **layered, textured, subtly animated
+background** applied once at the page level (fixed, behind everything):
+
+1. Base gradient — vertical `linear-gradient(var(--ink-0), var(--ink-1), var(--ink-0))`.
+2. Three large radial glows at low opacity, positioned asymmetrically:
+   - warm gold bottom-left (`radial-gradient(1100px 800px at 15% 95%, rgba(232,181,71,0.22), transparent 60%)`)
+   - cool violet top-right (`… 90% 5%, rgba(111,123,255,0.20)`)
+   - faint mint center (`… 50% 60%, rgba(91,227,184,0.08)`)
+3. A 32 × 32 dotted mesh (`radial-gradient(circle at 1px 1px, …)`)
+   with a slow `drift` animation (40s linear infinite,
+   `background-position` 0 → 320 160) so the page breathes without
+   being distracting.
+4. A very low-opacity SVG noise/grain layer on top (`feTurbulence`
+   fractal noise) with `mix-blend-mode: overlay` for film-grain
+   texture, preventing banding in the gradients.
+
+The effect is "stage before the performance" — quiet, dark,
+anticipatory — not an empty spreadsheet. Light-mode variant keeps the
+same recipe but with off-white bases (`#f6f5ee` / `#eae9df`) and
+reduced-opacity glows so it still has texture, not a plain color fill.
+
+Cards sit *above* this background as **glassy translucent surfaces**:
+
+```css
+.stage {
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.04),
+    rgba(255,255,255,0.015));
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  backdrop-filter: blur(10px) saturate(140%);
+}
+```
+
+### 3. Sticky header with an animated DAG wordmark
+
+The header is the first thing people see; replace the plain `<h1>` with:
+
+- A 34 × 34 SVG wordmark on the left: a 3-node micro-DAG (two parents,
+  one child) whose three edges are `stroke-dasharray` paths animated
+  with staggered `flow` keyframes so data appears to pulse through the
+  graph on a ~2.6s loop. It visually previews the whole product in one
+  glyph.
+- Wordmark text in `Instrument Serif` italic (`MAS · Orchestra`) with
+  a mono sub-tag (`redesign mock` / page subtitle) underneath.
+- The sticky **4-segment rail** described in §2 fills the remaining
+  width. Backdrop-blur + translucent dark background so it floats over
+  the drifting background mesh.
+
+### 6. Stage cards — done / current / pending
+
+Every stage is one card with a consistent skeleton:
+
+```
+┌──────────────────────────────────────────────┐
+│  01 · INPUT            [status chip / time]  │  ← tag-row
+│                                              │
+│  Problem title in italic serif               │  ← h2
+│                                              │
+│  mono meta · mono meta · mono meta           │  ← summary
+│                                              │
+│  ── stage-specific body ──                   │
+└──────────────────────────────────────────────┘
+```
+
+Visual states:
+
+- **Done** — `opacity: 0.42`, desaturated badges, muted text. A small
+  green `✓ accepted` / `✓ 5 agents · 6 edges · 2.1s` chip replaces the
+  live status. Hover lifts opacity to ~0.75 so scrolling up feels
+  interactive without fully re-lighting.
+- **Current** — full opacity, amber-tinted gradient
+  (`rgba(232,181,71,0.08) → rgba(111,123,255,0.04)`), amber border
+  (`rgba(232,181,71,0.35)`), and a soft drop-shadow glow
+  (`0 30px 80px -20px rgba(232,181,71,0.18)`). `h2` rendered in
+  `--gold-2` so the eye lands on it immediately.
+- **Pending** — `opacity: 0.28` and **dashed** border, so it reads as
+  "placeholder" rather than "content." Body shows a centered
+  placeholder: a mono caption line above, a faded italic serif line
+  below (`the final answer will land here`).
+
+Stage-specific bodies from the mock:
+
+- **Input (done)** — serif italic problem text with a 2px gold left
+  border; a row of mint `chip` pills showing the readiness checklist
+  (`problem ✓ / mode ✓ / model ✓`); a mono meta row (DoM, model,
+  char count). While active, chips light up as fields are filled;
+  when done they freeze green.
+- **Plan (done)** — 2-column grid of `agent-row` cards, each showing
+  agent ID, colored type badge, and one-line description. Inline mono
+  summary bar above shows the meta-agent sub-steps that already
+  completed (`calling meta-agent ✓ · streaming reasoning ✓ · parsing
+  XML ✓ · building DAG ✓`), freezing in "all green" state.
+- **Execute (current)** — see §7.
+- **Result (pending)** — see §8.
+
+### 4. Execute stage — graph + outputs
+
+Two equal columns inside the active stage card:
+
+**Graph panel (left)**
+- `340px` tall, own rounded container with its own subtle dotted
+  background and a faint violet top-glow.
+- Nodes are absolutely-positioned mono cards (`type` line small and
+  colored by agent kind, `id` line bold) rather than default React
+  Flow nodes. Three state styles:
+  - `done` — mint left-mark dot + desaturated mint border.
+  - `running` — amber `0 0 0 3px / 0 0 26px` glow that pulses
+    (`nodepulse` keyframes, 1.6s), plus a blinking amber dot next to
+    the ID.
+  - `pending` — `opacity: 0.5`, dashed border.
+- Edges are SVG paths with three styles: solid mint for `done`, dashed
+  amber with running `dash` keyframes (stroke-dashoffset scroll) for
+  edges leading into a `running` node, and faint dashed grey for
+  `pending`. This makes the data flow read at a glance.
+- Floating legend in the bottom-right: tiny mono chips
+  (`CoT SC Debate Reflexion Web`) with matching swatches. Everyone
+  gets the colors "for free" the first time they look.
+
+**Outputs panel (right)**
+- Vertical list of agent cards. Each card's border/background reflects
+  status (`done` → mint tint; `running` → amber tint; `pending` →
+  default). Hover lifts.
+- Card header has three things: (1) bold mono agent ID + colored type
+  badge + (for running) a 14px amber spinner; (2) right-aligned mono
+  meta (`3.1s · 812 tok`); on running cards the duration ticks live.
+- Card body is a single short line of output summary (≤ 2 lines,
+  `opacity: 0.82`). The full output expands on click.
+- Below the body, a mono `← depends on: a1, a2, a3` breadcrumb so
+  users can trace lineage without looking at the graph.
+
+**Execute header row + bar**
+- Tag row: `03 · EXECUTE` on the left, `live · 3 / 5 agents complete ·
+  00:12.4s` on the right, both mono, the count in `--gold-2`.
+- Below it a 6px tall shimmer bar that fills to the current
+  completion ratio and runs a gradient `shimmer` animation
+  (`var(--gold) → --gold-2 → --violet`, 2.2s linear) so the stage feels
+  alive even when the eye isn't on any single node.
+
+### 5. Result stage
+
+While pending it stays in the dashed-border "placeholder" state
+described in §6 so the user sees the whole pipeline shape from the
+start.
+
+When the answer lands:
+
+- The stage transitions to the `done` visual (not `current`), because
+  the rail has already advanced and the celebratory moment is about
+  the answer itself, not the stage header.
+- Final answer rendered in large `Instrument Serif` italic inside a
+  soft mint-tinted box with a 2px mint left border.
+- A one-shot ~400ms green pulse runs around the box border on arrival
+  (`@keyframes pulse-in`), then settles.
+- If `expectedAnswer` is present, a match/mismatch chip appears next
+  to the header: green `✓ matches expected` or rose
+  `✕ differs — see diff` (the diff view is a follow-up; the chip is
+  the MVP signal).
+- Footer row: three mono buttons — `copy answer`, `copy full trace`,
+  `new problem` — with restrained hover states (border color shift to
+  `--gold`, no fills).
+
+### 6. Motion — rules of thumb
+
+Motion should reinforce state, not decorate. Concrete pieces, all
+already in the mock:
+
+- **Background drift** — 40s slow `background-position` on the dot
+  mesh. Calm, ambient.
+- **Progress-rail active dot** — `pulse` 1.6s breathing glow.
+- **Wordmark DAG edges** — `flow` 2.6s, staggered 0 / 0.4 / 0.8s so
+  the three edges feel like a round.
+- **Running graph node** — `nodepulse` 1.6s (matches rail pulse
+  tempo).
+- **Running graph edge** — `dash` 0.9s fast scroll, so it reads as
+  "information moving."
+- **Execute shimmer bar** — `shimmer` 2.2s gradient slide.
+- **Spinner on running agent card** — `spin` 0.9s linear.
+- **Stage state transitions** — 0.3s `ease` on opacity/border-color
+  when a stage goes from pending → current or current → done.
+- **Auto-scroll on stage advance** — one-shot `scroll-behavior:
+  smooth` scrollIntoView with `block: 'start'`, then focus moves to
+  the new stage's first interactive element (for a11y).
+
+Everything stays in the ~1.0–2.6s tempo range so animations feel
+synchronized rather than chaotic.
+
+### 7. Implementation notes
+
+- Add the palette and fonts as CSS variables in `index.css`, and
+  import fonts via a single `@import` at the top. Remove the global
+  `* { @apply transition-colors duration-150 }` — scope transitions
+  per component; the graph especially suffers under it.
+- Export a single `PALETTE` and `AGENT_COLORS` from `types/index.ts`
+  and consume from `App.tsx`, `GraphViewer.tsx`, and `AgentOutputs.tsx`.
+  This kills the current duplicate-palette bug.
+- `App.tsx`'s current stage-replacing render becomes a single
+  `<PipelineLayout>` that always renders all four stages, passes each
+  a `state: 'done' | 'current' | 'pending'`, and exposes a
+  `scrollToStage(stage)` method that the state machine calls on
+  advance.
+- The rail becomes `<ProgressRail stages={…} current={…} />` rendered
+  inside a sticky wrapper; clicking a done segment calls
+  `scrollToStage`.
+- Replace the hand-rolled graph node with a custom React Flow node
+  type that reads the status and agent-color tokens from CSS
+  variables — this keeps the styling consistent with the rest of the
+  page automatically in both dark and (future) light modes.
+  
+
+
+
+
+## UX (https://github.com/ZixuanKe/mas-orchestra-demo/blob/main/mock.html) — a conversation, not a one-shot form
+
+Everything above describes what a single run looks like. The missing
+frame is *how the user moves between runs*. Today's demo is a dead end
+— after the final answer you either accept it or hit "New Problem"
+and throw away everything. That mismatches the Refine direction on
+the backend (see §Backend · Key Idea): the meta-agent should behave
+like an interactive graph designer, and the UI has to make that
+obvious.
+
+The model for the UI is a **four-beat conversational loop**, with the
+pipeline stages (§1) rendering as the body of the *current* turn, and
+older turns scrolling above in a persistent chat column on the right
+(or stacked below the hero on narrow screens).
+
+```
+┌─── chat ──────────────────────┐   ┌─── current run (pipeline) ────┐
+│  you  · 13:42                 │   │  01 · Input      (done)       │
+│  what is the smallest n …     │   │  02 · Plan       (done)       │
+│                               │   │  03 · Execute    (current)    │
+│  orchestra · 13:43            │   │  04 · Result     (pending)    │
+│  plan: 5 agents               │   │                               │
+│  answer: n = 253              │   │                               │
+│  ↳ refine this run            │   │                               │
+│                               │   │                               │
+│  you  · 13:45                 │   │                               │
+│  replace a2 with debate,      │   │                               │
+│  add a websearch verifier     │   │                               │
+│                               │   │                               │
+│  orchestra · 13:45            │   │                               │
+│  proposed edits · apply?      │   │                               │
+│  • remove SCAgent a2          │   │                               │
+│  • add DebateAgent a2'        │   │                               │
+│  • add WebSearchAgent a6      │   │                               │
+└───────────────────────────────┘   └───────────────────────────────┘
+```
+
+The **four beats** of the loop, and what the UI does for each:
+
+1. **Instruction** — the user types a problem (or picks a dataset
+   sample). This is a chat message from the user. The pipeline stages
+   light up on the right side and begin running; the same text also
+   becomes the body of the `Input` stage card.
+2. **Initial design** — the meta-agent produces a plan. This is a
+   chat message from *orchestra*: one line summary (`5 agents, 6
+   edges, DoM=high`), plus an inline mini-DAG thumbnail. The
+   full expanded plan lives in the `Plan` stage card on the right.
+   The chat message is clickable → scrolls the right column to the
+   plan.
+3. **Results** — the final answer is **rendered as a chat turn from
+   orchestra**, not just a green box at the bottom of the page.
+   Crucially, the message carries explicit refinement affordances
+   right there in the bubble:
+   - a short textual summary of the answer and how it was produced
+     (`a4 reconciled a1 + a2 against a3's retrieval; final: n = 253`)
+   - pill buttons: `✓ Accept` · `✎ Refine` · `⟳ Re-run` · `⎘ Copy`
+   - a one-line prompt underneath (`Want to change something? Tell
+     me — drop a node, add a verifier, swap CoT for SC, re-wire an
+     edge.`) that doubles as a placeholder in the composer
+   This is the key point: **by showing the result inside the chat,
+   the user sees that the result is not terminal — it's a turn they
+   can reply to.** Today's result card has no such affordance, which
+   is why users perceive the app as one-shot.
+4. **Vibe-coding for refinement** — the user replies in natural
+   language (`drop a4, add a verifier at the end that checks
+   arithmetic`). The meta-agent returns a proposal message showing
+   the *typed graph ops* it plans to apply (using the Add / Remove /
+   Merge / ReConfig / SetOutput / ReConnect vocabulary from the
+   Backend · Key Idea), with a diff preview on the right-column
+   graph (added nodes glow mint, removed nodes strike-through rose,
+   rewired edges dashed). The user clicks `Apply`; cached outputs
+   from unaffected nodes (a1, a3) are reused, only the changed /
+   downstream nodes re-execute, and the pipeline stages on the
+   right re-light. The loop returns to beat 3 with a new result
+   turn below the previous one.
+
+**Persistent chat column — concrete treatment**
+
+- Messages use the same `Manrope` body and `Instrument Serif` italic
+  for user text emphasis; orchestra's name is rendered in `--gold`.
+- Orchestra messages have a subtle left border in `--gold` (user
+  messages in `--violet`) so they're distinguishable without chat
+  bubbles on opposite sides — the column stays readable, not like an
+  SMS thread.
+- Collapsed/previous runs show the same `summary` mono row the stage
+  cards use (mode · DoM · model · elapsed) so the chat doubles as a
+  compact run history.
+- Clicking any message anchor-scrolls the right-column pipeline to
+  the corresponding stage *of that run*. Older runs stay on the page
+  greyed-out (§1 applies per-run), and the current run is fully lit.
+
+**Vibe-coding composer**
+
+- Sticky at the bottom of the chat column, like a code-assistant
+  input.
+- `JetBrains Mono` placeholder text rotates through concrete example
+  edits (`drop a4`, `add a verifier after a3`, `swap a1 for SC`,
+  `rerun a2 with o4-mini`) so the user learns the vocabulary by
+  reading.
+- Slash-command shortcuts for common ops: `/add`, `/remove`,
+  `/reconnect`, `/rerun`, `/model`. Each expands into a short form
+  (e.g. `/add` pops a small picker of Catalogue archetypes from the
+  Backend spec).
+- Multimodal later: drag a screenshot of a paper figure into the
+  composer, ask "build a graph like this."
+
+**Empty state and first-time guidance**
+
+- Before the first turn, the chat column shows orchestra's greeting
+  message with three starter prompts as pill buttons (a dataset
+  sample, a custom problem seed, a "tour the UI" option). No blank
+  page.
+- When a first result arrives, a one-time coach-mark points at the
+  `Refine` pill in the result bubble: *"Reply in plain English to
+  tweak the plan — orchestra will propose exact edits you can
+  approve."*
+
+**Why this matters**
+
+- It aligns the UI with the Refine mental model already defined on
+  the backend. Users stop asking "can I change something?" because
+  the chat affordance answers it before they think to ask.
+- It turns the demo from a linear form into an **iterative design
+  tool**, which is the actual product.
+- It gives researchers a natural artifact to screenshot / share — a
+  threaded conversation with a running DAG next to it reads as
+  "agentic workflow" at a glance, far better than a single green
+  answer card.
+  
+  
+  
+
+## Frontend (04/16)
 
 The current `mas-orchestra-demo` frontend (React 18 + Vite + Tailwind +
 React Flow) is functional but reads like a stock Tailwind scaffold —
@@ -118,267 +523,3 @@ Input ──●────── Plan ──●────── Execute ─�
 This avoids cluttering each stage with its own bar, and matches the
 mental model of a 4-step pipeline: one bar, four dots, current one lit.
 
-### 3. Visual identity — tokens
-
-The current UI defaults to `bg-gray-50` + white cards + system fonts,
-which is exactly what makes it feel generic. The fix is a concrete
-design system, wired to CSS variables in `index.css` and a single
-export of palette constants from `types/index.ts` so `App.tsx`,
-`GraphViewer.tsx`, and `AgentOutputs.tsx` pull from one source (today
-they hard-code slightly-different palettes).
-
-**Color tokens** (dark by default; light variant swaps `--ink-*` for
-off-whites):
-
-```css
-:root {
-  /* surface */
-  --ink-0: #07081a;   /* page base */
-  --ink-1: #0b0f26;   /* body gradient stop */
-  --ink-2: #121735;   /* card body */
-  --ink-3: #1c2450;   /* card active */
-  --line:  rgba(255,255,255,0.08);
-
-  /* text */
-  --text:  #e8ebff;
-  --muted: #8791b8;
-  --dim:   #4a527a;
-
-  /* accents */
-  --gold:   #e8b547;  /* primary "conductor" */
-  --gold-2: #ffd27a;  /* highlight */
-  --violet: #6f7bff;  /* supporting */
-  --mint:   #59e3a7;  /* success */
-  --rose:   #ff7a9c;  /* error */
-
-  /* agents — single source of truth for badges, graph, legend */
-  --cot:    #6ea8ff;
-  --sc:     #b28bff;
-  --debate: #ffb453;
-  --reflex: #5be3b8;
-  --web:    #ff7a9c;
-}
-```
-
-**Typography** (from Google Fonts):
-
-- Display — `Instrument Serif`, italic for hero and stage titles. Gives
-  the page an editorial, research-paper feel that matches the project's
-  academic framing.
-- Body — `Manrope` 300–700. Warm humanist sans, readable at every size.
-- Mono — `JetBrains Mono`. Used for agent IDs, durations, token counts,
-  XML, the rail labels, and every metadata row.
-
-Avoid `Inter` / `Roboto` / system fonts — they're what make the current
-UI indistinguishable from generic dashboards.
-
-### 4. The background, which is currently doing nothing
-
-Replace flat `bg-gray-50` with a **layered, textured, subtly animated
-background** applied once at the page level (fixed, behind everything):
-
-1. Base gradient — vertical `linear-gradient(var(--ink-0), var(--ink-1), var(--ink-0))`.
-2. Three large radial glows at low opacity, positioned asymmetrically:
-   - warm gold bottom-left (`radial-gradient(1100px 800px at 15% 95%, rgba(232,181,71,0.22), transparent 60%)`)
-   - cool violet top-right (`… 90% 5%, rgba(111,123,255,0.20)`)
-   - faint mint center (`… 50% 60%, rgba(91,227,184,0.08)`)
-3. A 32 × 32 dotted mesh (`radial-gradient(circle at 1px 1px, …)`)
-   with a slow `drift` animation (40s linear infinite,
-   `background-position` 0 → 320 160) so the page breathes without
-   being distracting.
-4. A very low-opacity SVG noise/grain layer on top (`feTurbulence`
-   fractal noise) with `mix-blend-mode: overlay` for film-grain
-   texture, preventing banding in the gradients.
-
-The effect is "stage before the performance" — quiet, dark,
-anticipatory — not an empty spreadsheet. Light-mode variant keeps the
-same recipe but with off-white bases (`#f6f5ee` / `#eae9df`) and
-reduced-opacity glows so it still has texture, not a plain color fill.
-
-Cards sit *above* this background as **glassy translucent surfaces**:
-
-```css
-.stage {
-  background: linear-gradient(180deg,
-    rgba(255,255,255,0.04),
-    rgba(255,255,255,0.015));
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  backdrop-filter: blur(10px) saturate(140%);
-}
-```
-
-### 5. Sticky header with an animated DAG wordmark
-
-The header is the first thing people see; replace the plain `<h1>` with:
-
-- A 34 × 34 SVG wordmark on the left: a 3-node micro-DAG (two parents,
-  one child) whose three edges are `stroke-dasharray` paths animated
-  with staggered `flow` keyframes so data appears to pulse through the
-  graph on a ~2.6s loop. It visually previews the whole product in one
-  glyph.
-- Wordmark text in `Instrument Serif` italic (`MAS · Orchestra`) with
-  a mono sub-tag (`redesign mock` / page subtitle) underneath.
-- The sticky **4-segment rail** described in §2 fills the remaining
-  width. Backdrop-blur + translucent dark background so it floats over
-  the drifting background mesh.
-
-### 6. Stage cards — done / current / pending
-
-Every stage is one card with a consistent skeleton:
-
-```
-┌──────────────────────────────────────────────┐
-│  01 · INPUT            [status chip / time]  │  ← tag-row
-│                                              │
-│  Problem title in italic serif               │  ← h2
-│                                              │
-│  mono meta · mono meta · mono meta           │  ← summary
-│                                              │
-│  ── stage-specific body ──                   │
-└──────────────────────────────────────────────┘
-```
-
-Visual states:
-
-- **Done** — `opacity: 0.42`, desaturated badges, muted text. A small
-  green `✓ accepted` / `✓ 5 agents · 6 edges · 2.1s` chip replaces the
-  live status. Hover lifts opacity to ~0.75 so scrolling up feels
-  interactive without fully re-lighting.
-- **Current** — full opacity, amber-tinted gradient
-  (`rgba(232,181,71,0.08) → rgba(111,123,255,0.04)`), amber border
-  (`rgba(232,181,71,0.35)`), and a soft drop-shadow glow
-  (`0 30px 80px -20px rgba(232,181,71,0.18)`). `h2` rendered in
-  `--gold-2` so the eye lands on it immediately.
-- **Pending** — `opacity: 0.28` and **dashed** border, so it reads as
-  "placeholder" rather than "content." Body shows a centered
-  placeholder: a mono caption line above, a faded italic serif line
-  below (`the final answer will land here`).
-
-Stage-specific bodies from the mock:
-
-- **Input (done)** — serif italic problem text with a 2px gold left
-  border; a row of mint `chip` pills showing the readiness checklist
-  (`problem ✓ / mode ✓ / model ✓`); a mono meta row (DoM, model,
-  char count). While active, chips light up as fields are filled;
-  when done they freeze green.
-- **Plan (done)** — 2-column grid of `agent-row` cards, each showing
-  agent ID, colored type badge, and one-line description. Inline mono
-  summary bar above shows the meta-agent sub-steps that already
-  completed (`calling meta-agent ✓ · streaming reasoning ✓ · parsing
-  XML ✓ · building DAG ✓`), freezing in "all green" state.
-- **Execute (current)** — see §7.
-- **Result (pending)** — see §8.
-
-### 7. Execute stage — graph + outputs
-
-Two equal columns inside the active stage card:
-
-**Graph panel (left)**
-- `340px` tall, own rounded container with its own subtle dotted
-  background and a faint violet top-glow.
-- Nodes are absolutely-positioned mono cards (`type` line small and
-  colored by agent kind, `id` line bold) rather than default React
-  Flow nodes. Three state styles:
-  - `done` — mint left-mark dot + desaturated mint border.
-  - `running` — amber `0 0 0 3px / 0 0 26px` glow that pulses
-    (`nodepulse` keyframes, 1.6s), plus a blinking amber dot next to
-    the ID.
-  - `pending` — `opacity: 0.5`, dashed border.
-- Edges are SVG paths with three styles: solid mint for `done`, dashed
-  amber with running `dash` keyframes (stroke-dashoffset scroll) for
-  edges leading into a `running` node, and faint dashed grey for
-  `pending`. This makes the data flow read at a glance.
-- Floating legend in the bottom-right: tiny mono chips
-  (`CoT SC Debate Reflexion Web`) with matching swatches. Everyone
-  gets the colors "for free" the first time they look.
-
-**Outputs panel (right)**
-- Vertical list of agent cards. Each card's border/background reflects
-  status (`done` → mint tint; `running` → amber tint; `pending` →
-  default). Hover lifts.
-- Card header has three things: (1) bold mono agent ID + colored type
-  badge + (for running) a 14px amber spinner; (2) right-aligned mono
-  meta (`3.1s · 812 tok`); on running cards the duration ticks live.
-- Card body is a single short line of output summary (≤ 2 lines,
-  `opacity: 0.82`). The full output expands on click.
-- Below the body, a mono `← depends on: a1, a2, a3` breadcrumb so
-  users can trace lineage without looking at the graph.
-
-**Execute header row + bar**
-- Tag row: `03 · EXECUTE` on the left, `live · 3 / 5 agents complete ·
-  00:12.4s` on the right, both mono, the count in `--gold-2`.
-- Below it a 6px tall shimmer bar that fills to the current
-  completion ratio and runs a gradient `shimmer` animation
-  (`var(--gold) → --gold-2 → --violet`, 2.2s linear) so the stage feels
-  alive even when the eye isn't on any single node.
-
-### 8. Result stage
-
-While pending it stays in the dashed-border "placeholder" state
-described in §6 so the user sees the whole pipeline shape from the
-start.
-
-When the answer lands:
-
-- The stage transitions to the `done` visual (not `current`), because
-  the rail has already advanced and the celebratory moment is about
-  the answer itself, not the stage header.
-- Final answer rendered in large `Instrument Serif` italic inside a
-  soft mint-tinted box with a 2px mint left border.
-- A one-shot ~400ms green pulse runs around the box border on arrival
-  (`@keyframes pulse-in`), then settles.
-- If `expectedAnswer` is present, a match/mismatch chip appears next
-  to the header: green `✓ matches expected` or rose
-  `✕ differs — see diff` (the diff view is a follow-up; the chip is
-  the MVP signal).
-- Footer row: three mono buttons — `copy answer`, `copy full trace`,
-  `new problem` — with restrained hover states (border color shift to
-  `--gold`, no fills).
-
-### 9. Motion — rules of thumb
-
-Motion should reinforce state, not decorate. Concrete pieces, all
-already in the mock:
-
-- **Background drift** — 40s slow `background-position` on the dot
-  mesh. Calm, ambient.
-- **Progress-rail active dot** — `pulse` 1.6s breathing glow.
-- **Wordmark DAG edges** — `flow` 2.6s, staggered 0 / 0.4 / 0.8s so
-  the three edges feel like a round.
-- **Running graph node** — `nodepulse` 1.6s (matches rail pulse
-  tempo).
-- **Running graph edge** — `dash` 0.9s fast scroll, so it reads as
-  "information moving."
-- **Execute shimmer bar** — `shimmer` 2.2s gradient slide.
-- **Spinner on running agent card** — `spin` 0.9s linear.
-- **Stage state transitions** — 0.3s `ease` on opacity/border-color
-  when a stage goes from pending → current or current → done.
-- **Auto-scroll on stage advance** — one-shot `scroll-behavior:
-  smooth` scrollIntoView with `block: 'start'`, then focus moves to
-  the new stage's first interactive element (for a11y).
-
-Everything stays in the ~1.0–2.6s tempo range so animations feel
-synchronized rather than chaotic.
-
-### 10. Implementation notes
-
-- Add the palette and fonts as CSS variables in `index.css`, and
-  import fonts via a single `@import` at the top. Remove the global
-  `* { @apply transition-colors duration-150 }` — scope transitions
-  per component; the graph especially suffers under it.
-- Export a single `PALETTE` and `AGENT_COLORS` from `types/index.ts`
-  and consume from `App.tsx`, `GraphViewer.tsx`, and `AgentOutputs.tsx`.
-  This kills the current duplicate-palette bug.
-- `App.tsx`'s current stage-replacing render becomes a single
-  `<PipelineLayout>` that always renders all four stages, passes each
-  a `state: 'done' | 'current' | 'pending'`, and exposes a
-  `scrollToStage(stage)` method that the state machine calls on
-  advance.
-- The rail becomes `<ProgressRail stages={…} current={…} />` rendered
-  inside a sticky wrapper; clicking a done segment calls
-  `scrollToStage`.
-- Replace the hand-rolled graph node with a custom React Flow node
-  type that reads the status and agent-color tokens from CSS
-  variables — this keeps the styling consistent with the rest of the
-  page automatically in both dark and (future) light modes.

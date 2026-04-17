@@ -13,8 +13,6 @@
     --ink-1: #0b0f26;
     --ink-2: #121735;
     --ink-3: #1c2450;
-    --fog:   rgba(255,255,255,0.06);
-    --fog-2: rgba(255,255,255,0.10);
     --line:  rgba(255,255,255,0.08);
     --text:  #e8ebff;
     --muted: #8791b8;
@@ -23,6 +21,7 @@
     --gold:   #e8b547;
     --gold-2: #ffd27a;
     --violet: #6f7bff;
+    --violet-2:#a5adff;
     --mint:   #59e3a7;
     --rose:   #ff7a9c;
 
@@ -62,8 +61,7 @@
   }
   .mesh {
     position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.35;
-    background-image:
-      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.10) 1px, transparent 1.5px);
+    background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.10) 1px, transparent 1.5px);
     background-size: 32px 32px;
     animation: drift 40s linear infinite;
   }
@@ -77,12 +75,12 @@
     position: sticky; top: 0; z-index: 50;
     backdrop-filter: blur(14px) saturate(140%);
     -webkit-backdrop-filter: blur(14px) saturate(140%);
-    background: linear-gradient(180deg, rgba(7,8,26,0.85), rgba(7,8,26,0.55));
+    background: linear-gradient(180deg, rgba(7,8,26,0.88), rgba(7,8,26,0.55));
     border-bottom: 1px solid var(--line);
   }
   .rail-inner {
-    max-width: 1120px; margin: 0 auto;
-    padding: 14px 28px;
+    max-width: 1440px; margin: 0 auto;
+    padding: 14px 32px;
     display: flex; align-items: center; gap: 28px;
   }
 
@@ -92,9 +90,7 @@
     font-family: "Instrument Serif", serif;
     font-size: 26px; letter-spacing: 0.3px; color: var(--text);
   }
-  .wordmark .name em {
-    color: var(--gold); font-style: italic;
-  }
+  .wordmark .name em { color: var(--gold); font-style: italic; }
   .wordmark .tag {
     font-family: "JetBrains Mono", monospace;
     font-size: 10px; color: var(--muted); letter-spacing: 0.18em;
@@ -107,8 +103,7 @@
     width: 12px; height: 12px; border-radius: 999px;
     border: 1.5px solid var(--dim);
     background: transparent;
-    flex: 0 0 auto;
-    position: relative;
+    flex: 0 0 auto; position: relative;
   }
   .step.done .dot {
     background: var(--gold); border-color: var(--gold); opacity: 0.55;
@@ -142,16 +137,9 @@
     background: linear-gradient(90deg, var(--dim), transparent 50%, var(--dim));
     opacity: 0.35; border-radius: 2px;
   }
-  .connector.filled {
-    background: linear-gradient(90deg, var(--gold), var(--gold-2));
-    opacity: 0.55;
-  }
-  .connector.half {
-    background: linear-gradient(90deg, var(--gold) 0%, var(--gold-2) 45%, var(--dim) 45%, var(--dim) 100%);
-    opacity: 0.55;
-  }
+  .connector.filled { background: linear-gradient(90deg, var(--gold), var(--gold-2)); opacity: 0.55; }
+  .connector.half   { background: linear-gradient(90deg, var(--gold) 0%, var(--gold-2) 45%, var(--dim) 45%, var(--dim) 100%); opacity: 0.55; }
 
-  /* wordmark DAG animation */
   .dag-edge {
     stroke: var(--gold); stroke-width: 1.5; fill: none;
     stroke-dasharray: 20; stroke-dashoffset: 20;
@@ -168,47 +156,241 @@
 
   /* ---------- Page container ---------- */
   .page {
-    max-width: 1120px; margin: 0 auto;
-    padding: 44px 28px 96px;
+    max-width: 1440px; margin: 0 auto;
+    padding: 28px 32px 96px;
   }
+
+  /* Compact hero — single row */
   .hero {
-    margin: 0 0 56px;
-    display: grid;
-    grid-template-columns: 1.3fr 1fr;
-    gap: 48px; align-items: end;
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 32px; margin: 12px 0 32px;
+    padding-bottom: 24px; border-bottom: 1px solid var(--line);
   }
   .hero h1 {
     font-family: "Instrument Serif", serif;
-    font-weight: 400; font-size: clamp(44px, 6vw, 76px);
-    line-height: 0.98; letter-spacing: -0.01em;
-    margin: 0 0 16px;
+    font-weight: 400; font-size: clamp(28px, 3vw, 42px);
+    line-height: 1.05; letter-spacing: -0.01em; margin: 0;
+    color: var(--text);
   }
   .hero h1 em { color: var(--gold); font-style: italic; }
-  .hero h1 .small {
-    display: block; font-size: 0.34em;
+  .hero .meta {
+    display: flex; gap: 18px; flex-wrap: wrap;
     font-family: "JetBrains Mono", monospace;
-    letter-spacing: 0.24em; text-transform: uppercase;
-    color: var(--muted); margin-bottom: 12px;
-  }
-  .hero p {
-    color: var(--muted); font-size: 15.5px; max-width: 44ch;
-    margin: 0;
-  }
-  .hero aside {
-    display: flex; flex-direction: column; gap: 10px;
-    font-family: "JetBrains Mono", monospace;
-    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    font-size: 11px; letter-spacing: 0.10em; text-transform: uppercase;
     color: var(--muted);
-    border-left: 1px solid var(--line); padding: 6px 0 6px 20px;
   }
-  .hero aside span b { color: var(--gold-2); font-weight: 500; }
+  .hero .meta b { color: var(--gold-2); font-weight: 500; }
 
-  /* ---------- Stages ---------- */
+  /* ---------- Two-column layout ---------- */
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(380px, 0.82fr) minmax(560px, 1.18fr);
+    gap: 28px;
+    align-items: start;
+  }
+
+  /* ---------- Chat column ---------- */
+  .chat {
+    position: sticky; top: 80px;
+    height: calc(100vh - 108px);
+    display: flex; flex-direction: column;
+    border-radius: 20px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+    border: 1px solid var(--line);
+    backdrop-filter: blur(10px) saturate(140%);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+    overflow: hidden;
+  }
+  .chat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--line);
+  }
+  .chat-head .title {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .chat-head .title b { color: var(--text); font-weight: 500; }
+  .chat-head .actions {
+    display: flex; gap: 6px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px; color: var(--dim); letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .chat-head .actions span { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
+
+  .chat-scroll {
+    flex: 1; overflow-y: auto;
+    padding: 20px 22px;
+    display: flex; flex-direction: column; gap: 20px;
+    scroll-behavior: smooth;
+  }
+  .chat-scroll::-webkit-scrollbar { width: 6px; }
+  .chat-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
+
+  .msg { animation: msgIn 0.35s ease both; }
+  @keyframes msgIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .msg .role {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+    margin-bottom: 6px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .msg .role .time { color: var(--dim); }
+  .msg .body {
+    font-size: 14px; line-height: 1.55;
+    padding-left: 14px; border-left: 2px solid var(--line);
+  }
+  .msg.user .role      { color: var(--violet-2); }
+  .msg.user .body      { border-left-color: var(--violet); color: var(--text); }
+  .msg.orchestra .role { color: var(--gold-2); }
+  .msg.orchestra .body { border-left-color: var(--gold); }
+
+  .msg.user .body em {
+    font-family: "Instrument Serif", serif; font-style: italic;
+    color: var(--text); font-size: 15px;
+  }
+
+  .mini-dag {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 8px;
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
+    background: rgba(7,8,26,0.4);
+    font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--muted);
+  }
+  .mini-dag svg { width: 70px; height: 32px; }
+  .mini-dag .mn { fill: var(--gold); }
+  .mini-dag .me { stroke: rgba(232,181,71,0.55); stroke-width: 1.3; fill: none; }
+  .mini-dag b { color: var(--text); font-weight: 500; }
+
+  .result-box {
+    margin-top: 10px;
+    padding: 14px 16px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(91,227,184,0.08), rgba(91,227,184,0.02));
+    border: 1px solid rgba(91,227,184,0.30);
+  }
+  .result-box .ans {
+    font-family: "Instrument Serif", serif; font-style: italic;
+    font-size: 26px; color: var(--mint); margin: 0;
+  }
+  .result-box .explain {
+    margin-top: 6px;
+    font-size: 13px; color: var(--muted);
+  }
+
+  .pills {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 11px; border-radius: 999px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px; letter-spacing: 0.08em;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+  }
+  .pill:hover { color: var(--text); border-color: var(--gold); }
+  .pill.primary { color: var(--gold-2); border-color: rgba(232,181,71,0.55); background: rgba(232,181,71,0.06); }
+  .pill.primary:hover { background: rgba(232,181,71,0.12); }
+  .pill.accept  { color: var(--mint); border-color: rgba(91,227,184,0.45); background: rgba(91,227,184,0.05); }
+  .pill.danger  { color: var(--rose); border-color: rgba(255,122,156,0.40); background: rgba(255,122,156,0.05); }
+
+  .invite {
+    margin-top: 10px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px; color: var(--dim); letter-spacing: 0.04em;
+  }
+  .invite b { color: var(--muted); font-weight: 500; }
+
+  .ops-list {
+    margin-top: 10px;
+    display: flex; flex-direction: column; gap: 6px;
+    font-family: "JetBrains Mono", monospace; font-size: 12px;
+    padding: 10px 12px;
+    background: rgba(7,8,26,0.4);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .ops-list .op { display: flex; gap: 10px; align-items: baseline; }
+  .ops-list .sign { width: 12px; font-weight: 600; }
+  .ops-list .op.add    .sign { color: var(--mint); }
+  .ops-list .op.remove .sign { color: var(--rose); }
+  .ops-list .op.mod    .sign { color: var(--gold-2); }
+  .ops-list .op .k { color: var(--muted); }
+  .ops-list .op .v { color: var(--text); }
+
+  /* Coach-mark on first result's Refine pill */
+  .coach {
+    margin-top: 10px;
+    padding: 10px 12px; border-radius: 10px;
+    background: rgba(111,123,255,0.08);
+    border: 1px dashed rgba(111,123,255,0.45);
+    font-size: 12px; color: var(--violet-2);
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .coach svg { flex: 0 0 16px; margin-top: 2px; }
+
+  /* Composer */
+  .composer {
+    border-top: 1px solid var(--line);
+    padding: 12px 14px 14px;
+    background: linear-gradient(180deg, rgba(7,8,26,0.4), rgba(7,8,26,0.7));
+  }
+  .composer .slash {
+    display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap;
+    font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: 0.10em;
+    color: var(--dim);
+  }
+  .composer .slash span {
+    padding: 3px 7px; border: 1px solid var(--line); border-radius: 6px;
+    cursor: pointer; transition: color 0.2s, border-color 0.2s;
+  }
+  .composer .slash span:hover { color: var(--text); border-color: var(--violet); }
+  .composer .slash span b { color: var(--violet-2); font-weight: 500; }
+
+  .composer-input {
+    display: flex; align-items: flex-end; gap: 10px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    transition: border-color 0.2s ease;
+  }
+  .composer-input:focus-within { border-color: rgba(111,123,255,0.55); }
+  .composer-input textarea {
+    flex: 1; background: transparent; border: 0; outline: none;
+    resize: none; color: var(--text);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px; line-height: 1.5;
+    min-height: 22px; max-height: 120px;
+  }
+  .composer-input textarea::placeholder { color: var(--dim); }
+  .composer-input button {
+    flex: 0 0 auto;
+    padding: 8px 14px; border-radius: 8px;
+    background: var(--gold); color: var(--ink-0);
+    border: 0; cursor: pointer;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    transition: background 0.2s;
+  }
+  .composer-input button:hover { background: var(--gold-2); }
+
+  /* ---------- Pipeline column ---------- */
+  .pipeline { display: flex; flex-direction: column; gap: 24px; }
+
+  /* Stage cards */
   .stage {
     position: relative;
-    margin-bottom: 28px;
     border-radius: 20px;
-    padding: 28px 32px;
+    padding: 24px 28px;
     background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
     border: 1px solid var(--line);
     backdrop-filter: blur(10px);
@@ -216,7 +398,7 @@
     transition: opacity 0.3s ease;
   }
   .stage.done    { opacity: 0.42; }
-  .stage.done:hover { opacity: 0.75; }
+  .stage.done:hover { opacity: 0.78; }
   .stage.current {
     background: linear-gradient(180deg, rgba(232,181,71,0.08), rgba(232,181,71,0.015) 40%, rgba(111,123,255,0.04));
     border-color: rgba(232,181,71,0.35);
@@ -225,19 +407,16 @@
       0 30px 80px -20px rgba(232,181,71,0.18),
       inset 0 1px 0 rgba(255,255,255,0.04);
   }
-  .stage.pending {
-    opacity: 0.28;
-    border-style: dashed;
-  }
+  .stage.pending { opacity: 0.28; border-style: dashed; }
+
   .stage .tag-row {
     display: flex; align-items: baseline; justify-content: space-between;
-    margin-bottom: 18px;
+    margin-bottom: 14px; gap: 14px;
   }
   .stage h2 {
     font-family: "Instrument Serif", serif;
     font-weight: 400; font-style: italic;
-    font-size: 34px; margin: 0;
-    color: var(--text);
+    font-size: 28px; margin: 0; color: var(--text);
   }
   .stage.current h2 { color: var(--gold-2); }
   .stage .step-no {
@@ -249,68 +428,53 @@
 
   .summary {
     font-family: "JetBrains Mono", monospace;
-    font-size: 12.5px; color: var(--muted);
-    display: flex; gap: 16px; flex-wrap: wrap;
-    margin-bottom: 14px;
+    font-size: 11.5px; color: var(--muted);
+    display: flex; gap: 14px; flex-wrap: wrap;
+    margin-bottom: 12px;
   }
   .summary b { color: var(--text); font-weight: 500; }
   .check {
     display: inline-flex; align-items: center; gap: 6px;
+    font-family: "JetBrains Mono", monospace; font-size: 11px;
     color: var(--mint);
+    letter-spacing: 0.10em;
   }
 
-  /* Input stage (done) */
-  .readiness { display: flex; gap: 18px; flex-wrap: wrap; }
+  .readiness { display: flex; gap: 10px; flex-wrap: wrap; }
   .chip {
-    display: inline-flex; align-items: center; gap: 8px;
-    font-family: "JetBrains Mono", monospace; font-size: 11.5px;
-    letter-spacing: 0.08em;
-    padding: 6px 12px;
-    border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: "JetBrains Mono", monospace; font-size: 11px;
+    letter-spacing: 0.08em; padding: 5px 10px; border-radius: 999px;
     background: rgba(91,227,184,0.10);
     border: 1px solid rgba(91,227,184,0.28);
     color: var(--mint);
   }
-  .chip.grey {
-    background: transparent;
-    border: 1px dashed var(--line);
-    color: var(--dim);
-  }
 
   .problem-box {
-    font-family: "Instrument Serif", serif;
-    font-style: italic;
-    font-size: 20px;
-    line-height: 1.45;
-    color: var(--text);
-    padding: 18px 22px;
-    border-left: 2px solid var(--gold);
+    font-family: "Instrument Serif", serif; font-style: italic;
+    font-size: 18px; line-height: 1.45; color: var(--text);
+    padding: 14px 18px; border-left: 2px solid var(--gold);
     background: rgba(255,255,255,0.02);
-    border-radius: 0 14px 14px 0;
-    margin-bottom: 14px;
+    border-radius: 0 14px 14px 0; margin-bottom: 12px;
   }
 
-  /* Plan stage */
-  .agents { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  /* Plan agents */
+  .agents { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .agent-row {
-    display: flex; align-items: center; gap: 14px;
-    padding: 14px 16px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px;
     background: rgba(255,255,255,0.025);
-    border: 1px solid var(--line);
-    border-radius: 12px;
+    border: 1px solid var(--line); border-radius: 12px;
   }
   .agent-id {
     font-family: "JetBrains Mono", monospace;
-    font-size: 13px; color: var(--text);
-    min-width: 44px;
+    font-size: 12px; color: var(--text); min-width: 34px;
   }
-  .agent-desc {
-    color: var(--muted); font-size: 13.5px; flex: 1;
-  }
+  .agent-desc { color: var(--muted); font-size: 12.5px; flex: 1; line-height: 1.35; }
   .badge {
     font-family: "JetBrains Mono", monospace;
-    font-size: 10.5px; font-weight: 500;
-    padding: 4px 9px; border-radius: 6px;
+    font-size: 10px; font-weight: 500;
+    padding: 4px 8px; border-radius: 6px;
     letter-spacing: 0.08em; white-space: nowrap;
   }
   .badge.cot    { color: var(--cot);    background: rgba(110,168,255,0.12); border: 1px solid rgba(110,168,255,0.30); }
@@ -319,52 +483,44 @@
   .badge.reflex { color: var(--reflex); background: rgba(91,227,184,0.12);  border: 1px solid rgba(91,227,184,0.30); }
   .badge.web    { color: var(--web);    background: rgba(255,122,156,0.12); border: 1px solid rgba(255,122,156,0.30); }
 
-  /* Execute stage: graph + agents */
-  .exec-grid {
-    display: grid;
-    grid-template-columns: 1.05fr 1fr;
-    gap: 24px;
-    align-items: start;
-  }
+  /* Execute body */
   .exec-head {
     display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 16px;
+    margin-bottom: 14px; gap: 10px;
   }
   .exec-count {
     font-family: "JetBrains Mono", monospace;
-    font-size: 12px; color: var(--muted); letter-spacing: 0.12em;
+    font-size: 11.5px; color: var(--muted); letter-spacing: 0.12em;
     text-transform: uppercase;
   }
   .exec-count b { color: var(--gold-2); font-weight: 600; }
   .exec-bar {
-    margin: 0 0 22px;
+    margin: 0 0 18px;
     height: 6px; border-radius: 999px;
     background: rgba(255,255,255,0.05);
     overflow: hidden; position: relative;
   }
   .exec-bar::after {
-    content: ""; position: absolute; inset: 0;
-    width: 43%;
+    content: ""; position: absolute; inset: 0; width: 43%;
     background: linear-gradient(90deg, var(--gold), var(--gold-2), var(--violet));
     background-size: 200% 100%;
     animation: shimmer 2.2s linear infinite;
     border-radius: 999px;
     box-shadow: 0 0 20px rgba(232,181,71,0.55);
   }
-  @keyframes shimmer {
-    0% { background-position: 0% 0; }
-    100% { background-position: 200% 0; }
-  }
+  @keyframes shimmer { 0% { background-position: 0% 0; } 100% { background-position: 200% 0; } }
 
+  .exec-grid {
+    display: grid; grid-template-columns: 1.05fr 1fr; gap: 18px;
+    align-items: start;
+  }
   .graph {
-    height: 340px;
-    position: relative;
+    height: 320px; position: relative;
     border-radius: 14px;
     background:
       radial-gradient(800px 400px at 50% 0%, rgba(111,123,255,0.08), transparent 70%),
       rgba(7,8,26,0.55);
-    border: 1px solid var(--line);
-    overflow: hidden;
+    border: 1px solid var(--line); overflow: hidden;
   }
   .graph-dots {
     position: absolute; inset: 0; opacity: 0.5;
@@ -373,22 +529,17 @@
   }
   .graph svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   .gnode {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    padding: 10px 14px;
-    border-radius: 10px;
+    position: absolute; transform: translate(-50%, -50%);
+    padding: 8px 12px; border-radius: 10px;
     background: rgba(18,23,53,0.92);
     border: 1.5px solid var(--line);
-    min-width: 110px;
+    min-width: 96px;
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
-    text-align: center;
+    font-size: 10px; text-align: center;
     transition: all 0.2s ease;
   }
-  .gnode .gtype {
-    display: block; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 3px;
-  }
-  .gnode .gid { color: var(--text); font-weight: 600; font-size: 12px; }
+  .gnode .gtype { display: block; font-size: 9.5px; letter-spacing: 0.10em; margin-bottom: 2px; }
+  .gnode .gid   { color: var(--text); font-weight: 600; font-size: 11.5px; }
   .gnode.done   { border-color: rgba(91,227,184,0.45); }
   .gnode.done .gtype   { color: var(--reflex); opacity: 0.85; }
   .gnode.running {
@@ -413,97 +564,101 @@
 
   .edge { stroke-width: 1.6; fill: none; }
   .edge.done { stroke: rgba(91,227,184,0.55); }
-  .edge.run {
-    stroke: var(--gold-2);
-    stroke-dasharray: 6 5;
-    animation: dash 0.9s linear infinite;
-  }
+  .edge.run  { stroke: var(--gold-2); stroke-dasharray: 6 5; animation: dash 0.9s linear infinite; }
   .edge.pend { stroke: rgba(255,255,255,0.15); stroke-dasharray: 3 5; }
+  .edge.added { stroke: rgba(91,227,184,0.75); stroke-dasharray: 4 3; }
   @keyframes dash { to { stroke-dashoffset: -22; } }
 
   .legend {
-    position: absolute; right: 12px; bottom: 12px;
-    display: flex; gap: 10px; flex-wrap: wrap;
-    padding: 8px 12px;
-    background: rgba(7,8,26,0.75);
-    border: 1px solid var(--line);
+    position: absolute; right: 10px; bottom: 10px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding: 6px 10px;
+    background: rgba(7,8,26,0.75); border: 1px solid var(--line);
     border-radius: 10px;
-    font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
-    letter-spacing: 0.06em;
+    font-family: "JetBrains Mono", monospace; font-size: 9.5px; letter-spacing: 0.06em;
   }
   .legend span { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
-  .legend span::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+  .legend span::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: currentColor; }
   .legend .l-cot    { color: var(--cot); }
   .legend .l-sc     { color: var(--sc); }
   .legend .l-debate { color: var(--debate); }
   .legend .l-reflex { color: var(--reflex); }
   .legend .l-web    { color: var(--web); }
 
-  /* agent output cards */
-  .out-list { display: flex; flex-direction: column; gap: 10px; }
+  /* Out list */
+  .out-list { display: flex; flex-direction: column; gap: 9px; }
   .out {
-    padding: 14px 16px;
-    border-radius: 12px;
+    padding: 12px 14px; border-radius: 12px;
     border: 1px solid var(--line);
     background: rgba(255,255,255,0.025);
   }
   .out.done    { border-color: rgba(91,227,184,0.30); background: rgba(91,227,184,0.04); }
   .out.running { border-color: rgba(232,181,71,0.45); background: rgba(232,181,71,0.06); }
+  .out.new     { border-color: rgba(91,227,184,0.45); background: rgba(91,227,184,0.05); position: relative; }
+  .out.new::before {
+    content: "NEW"; position: absolute; top: -8px; right: 12px;
+    font-family: "JetBrains Mono", monospace; font-size: 9px; font-weight: 700;
+    letter-spacing: 0.18em; color: var(--mint);
+    background: var(--ink-0); padding: 2px 7px; border-radius: 5px;
+    border: 1px solid rgba(91,227,184,0.45);
+  }
   .out .head {
     display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 6px; gap: 10px;
+    margin-bottom: 4px; gap: 10px;
   }
-  .out .left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .out .id { font-family: "JetBrains Mono", monospace; color: var(--text); font-size: 13px; font-weight: 600; }
+  .out .left { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .out .id   { font-family: "JetBrains Mono", monospace; color: var(--text); font-size: 12.5px; font-weight: 600; }
   .out .meta {
-    font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--muted);
-    display: flex; gap: 14px;
+    font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--muted);
+    display: flex; gap: 12px;
   }
-  .out .body {
-    font-size: 13px; color: var(--text); opacity: 0.82; margin-top: 6px;
-  }
+  .out .body { font-size: 12.5px; color: var(--text); opacity: 0.82; margin-top: 5px; }
   .out .deps {
-    font-family: "JetBrains Mono", monospace; font-size: 10.5px;
-    color: var(--muted); margin-top: 8px; letter-spacing: 0.06em;
+    font-family: "JetBrains Mono", monospace; font-size: 10px;
+    color: var(--muted); margin-top: 6px; letter-spacing: 0.05em;
+  }
+  .out .cached {
+    display: inline-block; margin-left: 6px;
+    font-family: "JetBrains Mono", monospace; font-size: 9px;
+    letter-spacing: 0.16em; color: var(--violet-2);
+    padding: 2px 6px; border-radius: 4px;
+    background: rgba(111,123,255,0.10); border: 1px solid rgba(111,123,255,0.30);
   }
   .spinner {
-    width: 14px; height: 14px; border-radius: 999px;
+    width: 13px; height: 13px; border-radius: 999px;
     border: 2px solid rgba(232,181,71,0.35); border-top-color: var(--gold-2);
-    animation: spin 0.9s linear infinite;
-    display: inline-block;
+    animation: spin 0.9s linear infinite; display: inline-block;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .placeholder {
-    text-align: center; padding: 48px 24px;
+    text-align: center; padding: 36px 20px;
     color: var(--dim);
     font-family: "JetBrains Mono", monospace;
-    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
   }
   .placeholder em {
     display: block;
     font-family: "Instrument Serif", serif; font-style: italic;
-    font-size: 28px; text-transform: none; letter-spacing: 0;
-    color: var(--muted);
-    margin-top: 10px;
+    font-size: 22px; text-transform: none; letter-spacing: 0;
+    color: var(--muted); margin-top: 8px;
   }
 
-  /* footer note */
-  .note {
-    margin-top: 60px;
-    font-family: "JetBrains Mono", monospace;
-    font-size: 11px; color: var(--dim); letter-spacing: 0.12em;
-    text-transform: uppercase; text-align: center;
-  }
-
-  @media (max-width: 900px) {
-    .hero { grid-template-columns: 1fr; gap: 20px; }
-    .hero aside { border-left: none; border-top: 1px solid var(--line); padding: 16px 0 0; }
-    .agents { grid-template-columns: 1fr; }
+  /* Responsive */
+  @media (max-width: 1180px) {
     .exec-grid { grid-template-columns: 1fr; }
+    .agents    { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 1040px) {
+    .layout { grid-template-columns: 1fr; }
+    .chat { position: static; height: auto; max-height: none; }
+    .chat-scroll { max-height: 520px; }
+  }
+  @media (max-width: 680px) {
+    .hero { flex-direction: column; align-items: flex-start; gap: 14px; }
     .rail .step .lbl { display: none; }
     .rail .connector { min-width: 14px; }
+    .page { padding: 18px 16px 60px; }
   }
 </style>
 </head>
@@ -526,7 +681,7 @@
         </svg>
         <div>
           <div class="name">MAS<em>·</em>Orchestra</div>
-          <div class="tag">redesign mock</div>
+          <div class="tag">redesign mock · run #2</div>
         </div>
       </div>
 
@@ -553,204 +708,330 @@
   <!-- ============ Page ============ -->
   <main class="page">
 
-    <!-- Hero -->
     <section class="hero">
-      <div>
-        <h1>
-          <span class="small">a multi-agent conductor</span>
-          Plans <em>arrive</em>,<br/>agents <em>play</em>,<br/>the answer <em>resolves</em>.
-        </h1>
-        <p>
-          A fine-tuned meta-agent composes a DAG of sub-agents for each problem;
-          they execute in parallel where possible, and their outputs stream
-          into this page live.
-        </p>
-      </div>
-      <aside>
+      <h1>A conversation with <em>the conductor</em>.</h1>
+      <div class="meta">
         <span>model · <b>mas-orchestra / browsecomp</b></span>
         <span>sub-agents · <b>gpt-4.1-mini</b></span>
-        <span>elapsed · <b>00:12.4s</b></span>
-      </aside>
-    </section>
-
-    <!-- ============ Stage 1: Input (done) ============ -->
-    <section class="stage done" aria-label="Input">
-      <div class="tag-row">
-        <div class="step-no">01 · input</div>
-        <span class="check">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          accepted
-        </span>
-      </div>
-      <h2>What is the smallest positive integer n such that …</h2>
-      <div class="summary" style="margin-top:14px">
-        <span>mode · <b>custom</b></span>
-        <span>DoM · <b>high</b></span>
-        <span>model · <b>gpt-4.1-mini</b></span>
-        <span>chars · <b>128</b></span>
-      </div>
-      <div class="readiness">
-        <span class="chip">problem <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span class="chip">mode <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span class="chip">model <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span>session · <b>00:02:41</b></span>
       </div>
     </section>
 
-    <!-- ============ Stage 2: Plan (done) ============ -->
-    <section class="stage done" aria-label="Plan">
-      <div class="tag-row">
-        <div class="step-no">02 · plan</div>
-        <span class="check">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          5 agents · 6 edges · 2.1s
-        </span>
-      </div>
-      <h2>A chain of thought, twice over, then a critic.</h2>
-      <div class="summary" style="margin:14px 0 18px">
-        <span>calling meta-agent <svg width="10" height="10" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5" stroke="#59e3a7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span>streaming reasoning <svg width="10" height="10" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5" stroke="#59e3a7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span>parsing XML <svg width="10" height="10" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5" stroke="#59e3a7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span>building DAG <svg width="10" height="10" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5" stroke="#59e3a7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      </div>
-      <div class="agents">
-        <div class="agent-row"><span class="agent-id">a1</span><span class="badge cot">CoTAgent</span><span class="agent-desc">First-pass chain-of-thought.</span></div>
-        <div class="agent-row"><span class="agent-id">a2</span><span class="badge sc">SCAgent</span><span class="agent-desc">Majority-vote over sampled paths.</span></div>
-        <div class="agent-row"><span class="agent-id">a3</span><span class="badge web">WebSearchAgent</span><span class="agent-desc">Retrieve supporting facts.</span></div>
-        <div class="agent-row"><span class="agent-id">a4</span><span class="badge debate">DebateAgent</span><span class="agent-desc">Reconcile a1 and a2.</span></div>
-        <div class="agent-row"><span class="agent-id">a5</span><span class="badge reflex">ReflexionAgent</span><span class="agent-desc">Critique and finalize.</span></div>
-      </div>
-    </section>
+    <div class="layout">
 
-    <!-- ============ Stage 3: Execute (current) ============ -->
-    <section class="stage current" aria-label="Execute">
-      <div class="tag-row">
-        <div class="step-no">03 · execute</div>
-        <div class="exec-count">live · <b>3 / 5 agents complete</b> · 00:12.4s</div>
-      </div>
-      <h2>Agents at work.</h2>
-      <div class="exec-bar" aria-hidden="true"></div>
-
-      <div class="exec-grid">
-        <!-- Graph -->
-        <div class="graph">
-          <div class="graph-dots"></div>
-          <svg viewBox="0 0 520 340" preserveAspectRatio="none">
-            <!-- edges -->
-            <path class="edge done" d="M120 70 C 120 130, 90 140, 90 180"/>
-            <path class="edge done" d="M260 70 C 260 130, 260 140, 260 180"/>
-            <path class="edge done" d="M400 70 C 400 130, 430 140, 430 180"/>
-            <path class="edge run"  d="M90 220 C 90 260, 240 260, 240 280"/>
-            <path class="edge run"  d="M260 220 C 260 250, 260 260, 260 280"/>
-            <path class="edge pend" d="M240 310 C 240 320, 260 320, 260 320"/>
-          </svg>
-          <div class="gnode done"    style="left: 23%; top: 20%;">
-            <span class="gtype">CoTAgent</span>
-            <span class="gid"><span class="gdot done"></span>a1</span>
-          </div>
-          <div class="gnode done"    style="left: 50%; top: 20%;">
-            <span class="gtype" style="color:var(--sc)">SCAgent</span>
-            <span class="gid"><span class="gdot done"></span>a2</span>
-          </div>
-          <div class="gnode done"    style="left: 77%; top: 20%;">
-            <span class="gtype" style="color:var(--web)">WebSearchAgent</span>
-            <span class="gid"><span class="gdot done"></span>a3</span>
-          </div>
-          <div class="gnode running" style="left: 50%; top: 64%;">
-            <span class="gtype">DebateAgent</span>
-            <span class="gid"><span class="gdot run"></span>a4</span>
-          </div>
-          <div class="gnode pending" style="left: 50%; top: 92%;">
-            <span class="gtype" style="color:var(--reflex)">ReflexionAgent</span>
-            <span class="gid">a5</span>
-          </div>
-
-          <div class="legend">
-            <span class="l-cot">CoT</span>
-            <span class="l-sc">SC</span>
-            <span class="l-debate">Debate</span>
-            <span class="l-reflex">Reflexion</span>
-            <span class="l-web">Web</span>
+      <!-- ============ Chat column ============ -->
+      <section class="chat" aria-label="Conversation">
+        <div class="chat-head">
+          <div class="title">conversation · <b>run #2</b></div>
+          <div class="actions">
+            <span>history</span>
+            <span>new</span>
           </div>
         </div>
 
-        <!-- Outputs -->
-        <div class="out-list">
-          <div class="out done">
-            <div class="head">
-              <div class="left">
-                <span class="id">a1</span>
-                <span class="badge cot">CoTAgent</span>
-              </div>
-              <div class="meta"><span>3.1s</span><span>812 tok</span></div>
+        <div class="chat-scroll">
+
+          <!-- Turn 1: user instruction -->
+          <div class="msg user">
+            <div class="role"><span>you</span><span class="time">· 13:42</span></div>
+            <div class="body">
+              <em>What is the smallest positive integer n such that the sum of its digits,
+              its reverse, and n itself all share a common factor greater than 1?</em>
             </div>
-            <div class="body">Laid out a 4-step derivation; candidate answer is <b>n = 253</b>.</div>
-            <div class="deps">← no deps</div>
           </div>
 
-          <div class="out done">
-            <div class="head">
-              <div class="left">
-                <span class="id">a2</span>
-                <span class="badge sc">SCAgent</span>
+          <!-- Turn 2: orchestra initial design -->
+          <div class="msg orchestra">
+            <div class="role"><span>orchestra</span><span class="time">· 13:42</span></div>
+            <div class="body">
+              Planned <b style="color:var(--text)">5 agents</b>, DoM = high.
+              Two parallel solvers (CoT + SC), a retrieval agent for cross-checking,
+              a debate agent to reconcile, then reflexion to finalize.
+              <div class="mini-dag" title="click to jump to plan">
+                <svg viewBox="0 0 100 40">
+                  <circle class="mn" cx="15" cy="10" r="3.5"/>
+                  <circle class="mn" cx="50" cy="10" r="3.5"/>
+                  <circle class="mn" cx="85" cy="10" r="3.5"/>
+                  <circle class="mn" cx="50" cy="25" r="3.5"/>
+                  <circle class="mn" cx="50" cy="37" r="3.5" style="fill:var(--gold-2)"/>
+                  <path class="me" d="M15 10 Q 30 18 50 25"/>
+                  <path class="me" d="M50 10 L 50 25"/>
+                  <path class="me" d="M85 10 Q 70 18 50 25"/>
+                  <path class="me" d="M50 25 L 50 37"/>
+                </svg>
+                <span>5 agents · 6 edges · <b>2.1s</b></span>
               </div>
-              <div class="meta"><span>5.4s</span><span>2,104 tok</span></div>
             </div>
-            <div class="body">Sampled 5 reasoning paths; majority vote → <b>n = 253</b> (4 / 5).</div>
-            <div class="deps">← no deps</div>
           </div>
 
-          <div class="out done">
-            <div class="head">
-              <div class="left">
-                <span class="id">a3</span>
-                <span class="badge web">WebSearchAgent</span>
+          <!-- Turn 3: result from run #1 -->
+          <div class="msg orchestra">
+            <div class="role"><span>orchestra</span><span class="time">· 13:43 · <span style="color:var(--muted)">run #1 result</span></span></div>
+            <div class="body">
+              Answer below.
+              <div class="result-box">
+                <p class="ans">n = 253</p>
+                <p class="explain">
+                  a4 (DebateAgent) reconciled a1's derivation with a2's 5-path
+                  majority vote. a3 (WebSearchAgent) surfaced no contradictions.
+                  Elapsed <b>00:18.6s</b>.
+                </p>
               </div>
-              <div class="meta"><span>2.8s</span><span>614 tok</span></div>
+
+              <div class="pills">
+                <span class="pill accept">✓ Accept</span>
+                <span class="pill primary">✎ Refine</span>
+                <span class="pill">⟳ Re-run</span>
+                <span class="pill">⎘ Copy</span>
+              </div>
+
+              <p class="invite">
+                <b>Want to change something?</b> Tell me — drop a node, add a verifier,
+                swap CoT for SC, re-wire an edge.
+              </p>
+
+              <div class="coach" role="note">
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="none">
+                  <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.3"/>
+                  <path d="M8 4.5v4M8 11h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+                <span>
+                  <b style="color:var(--violet-2)">First time?</b> Reply in plain English to
+                  tweak the plan — I'll propose exact edits you can approve before I rerun.
+                </span>
+              </div>
             </div>
-            <div class="body">Retrieved 3 sources; no contradictions to a1/a2.</div>
-            <div class="deps">← no deps</div>
           </div>
 
-          <div class="out running">
-            <div class="head">
-              <div class="left">
-                <span class="id">a4</span>
-                <span class="badge debate">DebateAgent</span>
-                <span class="spinner" aria-hidden="true"></span>
-              </div>
-              <div class="meta"><span>00:03.1s</span></div>
+          <!-- Turn 4: user refinement -->
+          <div class="msg user">
+            <div class="role"><span>you</span><span class="time">· 13:45</span></div>
+            <div class="body">
+              Drop the debate agent — I trust a1 and a2 enough. Instead, add a
+              websearch verifier at the end that double-checks the final number
+              against OEIS, and make a5 depend on it.
             </div>
-            <div class="body">Round 2 of 3: weighing a1's derivation against a2's vote …</div>
-            <div class="deps">← depends on: a1, a2, a3</div>
           </div>
 
-          <div class="out">
-            <div class="head">
-              <div class="left">
-                <span class="id" style="color: var(--dim)">a5</span>
-                <span class="badge reflex" style="opacity:0.6">ReflexionAgent</span>
+          <!-- Turn 5: orchestra proposed ops -->
+          <div class="msg orchestra">
+            <div class="role"><span>orchestra</span><span class="time">· 13:45</span></div>
+            <div class="body">
+              Proposed <b style="color:var(--text)">3 edits</b>. I'll reuse a1, a2, a3 from
+              the last run (cached) and only rerun what changes.
+              <div class="ops-list">
+                <div class="op remove"><span class="sign">−</span><span class="k">Remove</span><span class="v">DebateAgent <b style="color:var(--debate)">a4</b></span></div>
+                <div class="op add"><span class="sign">+</span><span class="k">Add</span><span class="v">WebSearchAgent <b style="color:var(--web)">a6</b> — verify vs OEIS</span></div>
+                <div class="op mod"><span class="sign">~</span><span class="k">ReConnect</span><span class="v">ReflexionAgent <b style="color:var(--reflex)">a5</b> depends on <b style="color:var(--web)">a6</b></span></div>
               </div>
-              <div class="meta" style="color: var(--dim)">pending</div>
+              <div class="pills">
+                <span class="pill accept">✓ Apply &amp; rerun</span>
+                <span class="pill">✎ Edit proposal</span>
+                <span class="pill danger">✕ Discard</span>
+              </div>
+              <p class="invite">
+                <b style="color:var(--mint)">Applied.</b> Rerunning — watch the pipeline on the right →
+              </p>
             </div>
-            <div class="deps" style="color:var(--dim)">← depends on: a4</div>
+          </div>
+
+        </div>
+
+        <!-- Composer -->
+        <div class="composer">
+          <div class="slash">
+            <span><b>/add</b> agent</span>
+            <span><b>/remove</b> &lt;id&gt;</span>
+            <span><b>/reconnect</b> a→b</span>
+            <span><b>/rerun</b></span>
+            <span><b>/model</b> o4-mini</span>
+          </div>
+          <div class="composer-input">
+            <textarea rows="1" placeholder="drop a4 · add a verifier after a3 · swap a1 for SC · rerun a2 with o4-mini"></textarea>
+            <button>Send ↵</button>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <!-- ============ Stage 4: Result (pending) ============ -->
-    <section class="stage pending" aria-label="Result">
-      <div class="tag-row">
-        <div class="step-no">04 · result</div>
-        <div class="exec-count" style="color: var(--dim)">awaiting final answer</div>
-      </div>
-      <div class="placeholder">
-        not yet
-        <em>the final answer will land here</em>
-      </div>
-    </section>
+      <!-- ============ Pipeline column ============ -->
+      <section class="pipeline" aria-label="Current run">
 
-    <div class="note">all of this is a static mock · no backend wired</div>
+        <!-- Stage 1: Input (done) -->
+        <section class="stage done" aria-label="Input">
+          <div class="tag-row">
+            <div class="step-no">01 · input</div>
+            <span class="check">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              accepted
+            </span>
+          </div>
+          <h2>What is the smallest positive integer n …</h2>
+          <div class="summary" style="margin-top:12px">
+            <span>mode · <b>custom</b></span>
+            <span>DoM · <b>high</b></span>
+            <span>model · <b>gpt-4.1-mini</b></span>
+            <span>chars · <b>128</b></span>
+          </div>
+          <div class="readiness">
+            <span class="chip">problem <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="chip">mode <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span class="chip">model <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </div>
+        </section>
+
+        <!-- Stage 2: Plan (done, post-refinement) -->
+        <section class="stage done" aria-label="Plan">
+          <div class="tag-row">
+            <div class="step-no">02 · plan <span style="color: var(--violet-2); margin-left: 8px">· revised</span></div>
+            <span class="check">5 agents · 5 edges · 1.4s</span>
+          </div>
+          <h2>Two solvers, retrieval, verifier, critic.</h2>
+          <div class="summary" style="margin:12px 0 14px">
+            <span>edits applied · <b style="color:var(--mint)">−1 +1 ~1</b></span>
+            <span>cached agents · <b style="color:var(--violet-2)">3</b></span>
+            <span>re-executing · <b style="color:var(--gold-2)">2</b></span>
+          </div>
+          <div class="agents">
+            <div class="agent-row"><span class="agent-id">a1</span><span class="badge cot">CoTAgent</span><span class="agent-desc">First-pass chain-of-thought.</span></div>
+            <div class="agent-row"><span class="agent-id">a2</span><span class="badge sc">SCAgent</span><span class="agent-desc">Majority-vote over sampled paths.</span></div>
+            <div class="agent-row"><span class="agent-id">a3</span><span class="badge web">WebSearchAgent</span><span class="agent-desc">Retrieve supporting facts.</span></div>
+            <div class="agent-row" style="border-color: rgba(91,227,184,0.35); background: rgba(91,227,184,0.05)">
+              <span class="agent-id">a6</span><span class="badge web">WebSearchAgent</span>
+              <span class="agent-desc"><span style="color:var(--mint); font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.14em">NEW · </span>verify final n against OEIS.</span>
+            </div>
+            <div class="agent-row"><span class="agent-id">a5</span><span class="badge reflex">ReflexionAgent</span><span class="agent-desc">Critique and finalize.</span></div>
+          </div>
+        </section>
+
+        <!-- Stage 3: Execute (current) -->
+        <section class="stage current" aria-label="Execute">
+          <div class="tag-row">
+            <div class="step-no">03 · execute</div>
+            <div class="exec-count">live · <b>3 / 5 agents complete</b> · 00:12.4s</div>
+          </div>
+          <h2>Agents at work.</h2>
+          <div class="exec-bar" aria-hidden="true"></div>
+
+          <div class="exec-grid">
+            <!-- Graph -->
+            <div class="graph">
+              <div class="graph-dots"></div>
+              <svg viewBox="0 0 520 340" preserveAspectRatio="none">
+                <path class="edge done" d="M120 70 C 120 130, 110 150, 110 180"/>
+                <path class="edge done" d="M260 70 C 260 130, 260 140, 260 180"/>
+                <path class="edge done" d="M400 70 C 400 130, 410 150, 410 180"/>
+                <path class="edge added" d="M110 220 C 110 250, 240 255, 240 275"/>
+                <path class="edge added" d="M260 220 C 260 250, 260 255, 260 275"/>
+                <path class="edge run"  d="M410 220 C 410 250, 280 255, 280 275"/>
+                <path class="edge pend" d="M260 305 C 260 318, 260 318, 260 325"/>
+              </svg>
+              <div class="gnode done"    style="left: 21%; top: 20%;">
+                <span class="gtype">CoTAgent <span class="cached" style="color:var(--violet-2); margin-left:4px">cached</span></span>
+                <span class="gid"><span class="gdot done"></span>a1</span>
+              </div>
+              <div class="gnode done"    style="left: 50%; top: 20%;">
+                <span class="gtype" style="color:var(--sc)">SCAgent <span style="color:var(--violet-2); margin-left:4px">cached</span></span>
+                <span class="gid"><span class="gdot done"></span>a2</span>
+              </div>
+              <div class="gnode done"    style="left: 79%; top: 20%;">
+                <span class="gtype" style="color:var(--web)">WebSearchAgent</span>
+                <span class="gid"><span class="gdot done"></span>a3</span>
+              </div>
+              <div class="gnode running" style="left: 53%; top: 62%;">
+                <span class="gtype" style="color:var(--web)">WebSearchAgent</span>
+                <span class="gid"><span class="gdot run"></span>a6 <span style="color:var(--mint); font-size:9px; letter-spacing:0.14em; margin-left:2px">NEW</span></span>
+              </div>
+              <div class="gnode pending" style="left: 53%; top: 90%;">
+                <span class="gtype" style="color:var(--reflex)">ReflexionAgent</span>
+                <span class="gid">a5</span>
+              </div>
+
+              <div class="legend">
+                <span class="l-cot">CoT</span>
+                <span class="l-sc">SC</span>
+                <span class="l-reflex">Reflexion</span>
+                <span class="l-web">Web</span>
+              </div>
+            </div>
+
+            <!-- Outputs -->
+            <div class="out-list">
+              <div class="out done">
+                <div class="head">
+                  <div class="left">
+                    <span class="id">a1</span>
+                    <span class="badge cot">CoTAgent</span>
+                    <span class="cached">reused</span>
+                  </div>
+                  <div class="meta"><span>3.1s</span><span>812 tok</span></div>
+                </div>
+                <div class="body">Laid out a 4-step derivation; candidate <b>n = 253</b>.</div>
+              </div>
+
+              <div class="out done">
+                <div class="head">
+                  <div class="left">
+                    <span class="id">a2</span>
+                    <span class="badge sc">SCAgent</span>
+                    <span class="cached">reused</span>
+                  </div>
+                  <div class="meta"><span>5.4s</span><span>2,104 tok</span></div>
+                </div>
+                <div class="body">5 reasoning paths; majority → <b>n = 253</b> (4 / 5).</div>
+              </div>
+
+              <div class="out done">
+                <div class="head">
+                  <div class="left">
+                    <span class="id">a3</span>
+                    <span class="badge web">WebSearchAgent</span>
+                  </div>
+                  <div class="meta"><span>2.8s</span><span>614 tok</span></div>
+                </div>
+                <div class="body">3 sources; no contradictions to a1 / a2.</div>
+              </div>
+
+              <div class="out running new">
+                <div class="head">
+                  <div class="left">
+                    <span class="id">a6</span>
+                    <span class="badge web">WebSearchAgent</span>
+                    <span class="spinner" aria-hidden="true"></span>
+                  </div>
+                  <div class="meta"><span>00:03.1s</span></div>
+                </div>
+                <div class="body">Querying OEIS for <i>n = 253</i> and neighbors …</div>
+                <div class="deps">← depends on: a1, a2</div>
+              </div>
+
+              <div class="out">
+                <div class="head">
+                  <div class="left">
+                    <span class="id" style="color: var(--dim)">a5</span>
+                    <span class="badge reflex" style="opacity:0.6">ReflexionAgent</span>
+                  </div>
+                  <div class="meta" style="color: var(--dim)">pending</div>
+                </div>
+                <div class="deps" style="color:var(--dim)">← depends on: a6</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Stage 4: Result (pending) -->
+        <section class="stage pending" aria-label="Result">
+          <div class="tag-row">
+            <div class="step-no">04 · result</div>
+            <div class="exec-count" style="color: var(--dim)">awaiting final answer</div>
+          </div>
+          <div class="placeholder">
+            not yet
+            <em>the revised answer will arrive here — and as a chat turn you can refine again.</em>
+          </div>
+        </section>
+
+      </section>
+    </div>
   </main>
 </body>
 </html>
