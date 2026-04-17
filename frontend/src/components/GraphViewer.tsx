@@ -1,11 +1,13 @@
-import { useMemo } from "react";
-import { ReactFlow, Node, Edge as FlowEdge, Background, Controls, MarkerType, Handle, Position } from "@xyflow/react";
+import { useMemo, useState, useCallback } from "react";
+import { ReactFlow, Node, Edge as FlowEdge, Background, Controls, MiniMap, MarkerType, Handle, Position } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { Graph, AgentState, AgentType } from "../types";
 
 interface Props {
   graph: Graph;
   agentStates: Record<string, AgentState>;
+  openAgentId?: string | null;
+  onOpenAgentHandled?: () => void;
 }
 
 const COLORS: Record<AgentType, string> = {
@@ -23,11 +25,21 @@ const STATUS_BORDER: Record<string, string> = {
   failed: "border-red-400",
 };
 
-function AgentNode({ data }: { data: { label: string; type: AgentType; status: string } }) {
+const STATUS_BADGE: Record<string, string> = {
+  pending: "bg-gray-100 text-gray-500",
+  running: "bg-amber-100 text-amber-700",
+  completed: "bg-emerald-100 text-emerald-700",
+  failed: "bg-red-100 text-red-700",
+};
+
+function AgentNode({ data }: { data: { label: string; type: AgentType; status: string; selected?: boolean } }) {
   return (
     <>
       <Handle type="target" position={Position.Top} style={{ background: "#9ca3af", border: "none", width: 8, height: 8 }} />
-      <div className={`px-4 py-3 rounded-lg border-2 bg-white min-w-[140px] transition-all ${STATUS_BORDER[data.status] || STATUS_BORDER.pending}`}>
+      <div className={`px-4 py-3 rounded-lg border-2 bg-white min-w-[140px] transition-all cursor-pointer
+        ${STATUS_BORDER[data.status] || STATUS_BORDER.pending}
+        ${data.selected ? "ring-2 ring-blue-500 ring-offset-1" : ""}
+      `}>
         <div className="text-xs font-mono mb-1" style={{ color: COLORS[data.type] }}>{data.type}</div>
         <div className="text-sm font-medium text-gray-800">{data.label}</div>
         {data.status === "running" && (
@@ -44,11 +56,44 @@ function AgentNode({ data }: { data: { label: string; type: AgentType; status: s
 
 const nodeTypes = { agent: AgentNode };
 
-export function GraphViewer({ graph, agentStates }: Props) {
+const ExpandIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+  </svg>
+);
+
+const ShrinkIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+    <path d="M4 14h6v6M14 4h6v6M14 10l7-7M3 21l7-7" />
+  </svg>
+);
+
+const CloseIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+    <path d="M6 18L18 6M6 6l12 12" />
+  </svg>
+);
+
+export function GraphViewer({ graph, agentStates, openAgentId, onOpenAgentHandled }: Props) {
+  const [fullscreen, setFullscreen] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+
+  if (openAgentId && (!fullscreen || selectedAgent !== openAgentId)) {
+    setFullscreen(true);
+    setSelectedAgent(openAgentId);
+    onOpenAgentHandled?.();
+  }
+
+  const toggleFullscreen = useCallback(() => {
+    setFullscreen(f => !f);
+    if (fullscreen) setSelectedAgent(null);
+  }, [fullscreen]);
+
+  const agentMap = useMemo(() => new Map(graph.agents.map(a => [a.id, a])), [graph.agents]);
+
   const { nodes, edges } = useMemo(() => {
     const layers: string[][] = [];
     const placed = new Set<string>();
-    const agentMap = new Map(graph.agents.map(a => [a.id, a]));
 
     while (placed.size < graph.agents.length) {
       const layer = graph.agents
@@ -60,7 +105,7 @@ export function GraphViewer({ graph, agentStates }: Props) {
     }
 
     const nodes: Node[] = [];
-    const xSpacing = 200, ySpacing = 120;
+    const xSpacing = 220, ySpacing = 140;
 
     layers.forEach((layer, y) => {
       const startX = -layer.length * xSpacing / 2 + xSpacing / 2;
@@ -70,7 +115,12 @@ export function GraphViewer({ graph, agentStates }: Props) {
           id,
           type: "agent",
           position: { x: startX + x * xSpacing, y: y * ySpacing },
-          data: { label: id, type: agent.type, status: agentStates[id]?.status || "pending" },
+          data: {
+            label: id,
+            type: agent.type,
+            status: agentStates[id]?.status || "pending",
+            selected: id === selectedAgent,
+          },
         });
       });
     });
@@ -86,14 +136,140 @@ export function GraphViewer({ graph, agentStates }: Props) {
     }));
 
     return { nodes, edges };
-  }, [graph, agentStates]);
+  }, [graph, agentStates, agentMap, selectedAgent]);
+
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    setSelectedAgent(prev => prev === node.id ? null : node.id);
+  }, []);
+
+  const selectedAgentData = selectedAgent ? agentMap.get(selectedAgent) : null;
+  const selectedState = selectedAgent ? agentStates[selectedAgent] : null;
+
+  const flowContent = (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      onNodeClick={onNodeClick}
+      fitView
+      minZoom={0.05}
+      maxZoom={3}
+      proOptions={{ hideAttribution: true }}
+    >
+      <Background color="#e5e7eb" gap={20} />
+      <Controls />
+      {fullscreen && <MiniMap pannable zoomable />}
+    </ReactFlow>
+  );
+
+  if (fullscreen) {
+    return (
+      <div className="fixed inset-0 z-[100] bg-white flex flex-col">
+        <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
+          <span className="text-sm font-medium text-gray-700">Agent Graph</span>
+          <button
+            onClick={toggleFullscreen}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-white border rounded-lg hover:bg-gray-50"
+          >
+            <ShrinkIcon /> Exit Fullscreen
+          </button>
+        </div>
+        <div className="flex flex-1 overflow-hidden">
+          <div className={`${selectedAgent ? "flex-1" : "w-full"} transition-all`}>
+            {flowContent}
+          </div>
+          {selectedAgent && selectedAgentData && (
+            <div className="w-[400px] border-l bg-white flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+                <div className="flex items-center gap-2">
+                  <code className="text-sm font-mono font-semibold text-gray-800">{selectedAgent}</code>
+                  <span
+                    className="px-2 py-0.5 text-xs font-medium rounded"
+                    style={{ backgroundColor: COLORS[selectedAgentData.type] + "20", color: COLORS[selectedAgentData.type] }}
+                  >
+                    {selectedAgentData.type}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setSelectedAgent(null)}
+                  className="p-1 text-gray-400 hover:text-gray-600 rounded"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div>
+                  <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Description</h4>
+                  <p className="text-sm text-gray-700">{selectedAgentData.description}</p>
+                </div>
+                {selectedAgentData.input && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Input</h4>
+                    <pre className="text-xs text-gray-700 bg-gray-50 p-3 rounded-lg whitespace-pre-wrap break-words">{selectedAgentData.input}</pre>
+                  </div>
+                )}
+                {selectedAgentData.depends_on.length > 0 && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Dependencies</h4>
+                    <div className="flex flex-wrap gap-1">
+                      {selectedAgentData.depends_on.map(dep => (
+                        <button
+                          key={dep}
+                          onClick={() => setSelectedAgent(dep)}
+                          className="px-2 py-0.5 text-xs font-mono bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                        >
+                          {dep}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Status</h4>
+                  <span className={`px-2 py-0.5 text-xs font-medium rounded ${STATUS_BADGE[selectedState?.status || "pending"]}`}>
+                    {selectedState?.status || "pending"}
+                  </span>
+                </div>
+                {selectedState?.status === "running" && (
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                    Processing...
+                  </div>
+                )}
+                {selectedState?.output && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Output</h4>
+                    <div className="text-sm text-gray-700 bg-emerald-50 border border-emerald-200 p-3 rounded-lg whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto">
+                      {selectedState.output}
+                    </div>
+                  </div>
+                )}
+                {selectedState?.error && (
+                  <div>
+                    <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Error</h4>
+                    <div className="text-sm text-red-700 bg-red-50 border border-red-200 p-3 rounded-lg">
+                      {selectedState.error}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-[400px] bg-white rounded-lg border border-gray-200 shadow-sm">
-      <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} fitView proOptions={{ hideAttribution: true }}>
-        <Background color="#e5e7eb" gap={20} />
-        <Controls />
-      </ReactFlow>
+    <div className="relative h-[500px] bg-white rounded-lg border border-gray-200 shadow-sm">
+      <button
+        onClick={toggleFullscreen}
+        className="absolute top-2 right-2 z-10 p-1.5 bg-white border rounded-md shadow-sm hover:bg-gray-50 text-gray-500"
+        title="Fullscreen"
+      >
+        <ExpandIcon />
+      </button>
+      {flowContent}
     </div>
   );
 }

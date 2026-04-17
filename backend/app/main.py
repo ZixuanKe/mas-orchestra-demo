@@ -5,24 +5,25 @@ load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 import asyncio
 import json
 import re
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+# from slowapi import Limiter, _rate_limit_exceeded_handler
+# from slowapi.errors import RateLimitExceeded
+# from slowapi.util import get_remote_address
 
 from .models import Graph, Dataset, DATASET_META, DomLevel
 from .datasets import get_samples
 from .parser import parse, topo_sort
 from .metaagent import call_metaagent
 from .executor import execute_agent
+from .refine import refine_plan
 
-limiter = Limiter(key_func=get_remote_address)
+# limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="MAS-Orchestra Demo")
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# app.state.limiter = limiter
+# app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
@@ -38,6 +39,13 @@ class PlanResponse(BaseModel):
     thinking: str | None = None
 
 
+class RefineRequest(BaseModel):
+    problem: str
+    current_xml: str
+    user_message: str
+    dom: DomLevel | None = None
+
+
 class ExecuteRequest(BaseModel):
     problem: str
     graph: dict
@@ -49,8 +57,8 @@ def sse(event: str, data: dict) -> dict:
 
 
 @app.post("/plan")
-@limiter.limit("10/hour")
-async def plan(request: Request, req: PlanRequest) -> PlanResponse:
+# @limiter.limit("10/hour")
+async def plan(req: PlanRequest) -> PlanResponse:
     if req.dataset is not None:
         dom_level = DATASET_META[req.dataset]["dom"]
     else:
@@ -62,6 +70,19 @@ async def plan(request: Request, req: PlanRequest) -> PlanResponse:
     return PlanResponse(xml=xml, graph=graph.model_dump(), thinking=thinking)
 
 
+@app.post("/refine")
+async def refine(req: RefineRequest) -> PlanResponse:
+    dom_level = req.dom or DomLevel.HIGH
+    xml = await refine_plan(req.current_xml, req.user_message, req.problem)
+    match = re.search(r"<thinking>(.*?)</thinking>", xml, re.DOTALL | re.IGNORECASE)
+    thinking = match.group(1).strip() if match else None
+    graph = parse(xml, dom_level.value)
+    return PlanResponse(xml=xml, graph=graph.model_dump(), thinking=thinking)
+
+
+MAX_CONCURRENT_AGENTS = 5
+
+
 async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "gpt-4.1-mini"):
     graph = Graph(**graph_dict)
     yield sse("graph", graph.model_dump())
@@ -70,6 +91,7 @@ async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "g
     agents = {a.id: a for a in graph.agents}
     ctx: dict[str, str] = {}
     remaining = set(order)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
 
     while remaining:
         ready = [aid for aid in remaining if all(d in ctx for d in agents[aid].depends_on)]
@@ -83,11 +105,12 @@ async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "g
         queue: asyncio.Queue = asyncio.Queue()
 
         async def run_and_enqueue(aid: str):
-            try:
-                output = await execute_agent(agents[aid], problem, ctx, subagent_model, is_answer_agent=(aid == graph.answer_agent))
-                await queue.put((aid, output, None))
-            except Exception as e:
-                await queue.put((aid, None, str(e)))
+            async with semaphore:
+                try:
+                    output = await execute_agent(agents[aid], problem, ctx, subagent_model, is_answer_agent=(aid == graph.answer_agent))
+                    await queue.put((aid, output, None))
+                except Exception as e:
+                    await queue.put((aid, None, str(e)))
 
         tasks = [asyncio.create_task(run_and_enqueue(aid)) for aid in ready]
 
@@ -107,8 +130,8 @@ async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "g
 
 
 @app.post("/execute")
-@limiter.limit("10/hour")
-async def execute(request: Request, req: ExecuteRequest):
+# @limiter.limit("10/hour")
+async def execute(req: ExecuteRequest):
     return EventSourceResponse(run_execution(req.problem, req.graph, req.subagent_model))
 
 

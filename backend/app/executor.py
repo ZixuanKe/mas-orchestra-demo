@@ -154,7 +154,7 @@ def resolve_input(agent_input: str, problem: str, ctx: dict[str, str]) -> str:
     )
 
 
-async def _llm_call(system: str, user: str, model: str, max_tokens: int = 1024) -> str:
+async def _llm_call(system: str, user: str, model: str, max_tokens: int = 4096) -> str:
     """Single chat completion call with reasoning-model awareness."""
     is_reasoning = model.startswith("o")
     kwargs: dict = dict(

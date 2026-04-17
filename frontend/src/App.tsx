@@ -1,27 +1,84 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useOrchestration } from "./hooks/useOrchestration";
 import { GraphViewer } from "./components/GraphViewer";
-import { AgentOutputs } from "./components/AgentOutputs";
 import { DatasetPicker } from "./components/DatasetPicker";
 import type { Dataset, DomLevel, Mode, Stage, SubagentModel } from "./types";
 import { AGENT_POOL, DATASETS, DOM_OPTIONS, MODES, SUBAGENT_MODELS } from "./types";
 
-const STAGES: Stage[] = ["input", "plan", "execute", "result"];
+const STAGES: { key: Stage; label: string }[] = [
+  { key: "input", label: "Input" },
+  { key: "plan", label: "Plan" },
+  { key: "execute", label: "Execute" },
+  { key: "result", label: "Result" },
+];
 
-function StepNav({ current, onSelect, canSelect }: { current: Stage; onSelect: (s: Stage) => void; canSelect: (s: Stage) => boolean }) {
+function ProgressRail({
+  current,
+  agentStates,
+  plan,
+  isLoading,
+  onSelect,
+  canSelect,
+}: {
+  current: Stage;
+  agentStates: Record<string, { status: string }>;
+  plan: { graph: { agents: { id: string }[] } } | null;
+  isLoading: boolean;
+  onSelect: (s: Stage) => void;
+  canSelect: (s: Stage) => boolean;
+}) {
+  const stageIdx = STAGES.findIndex(s => s.key === current);
+
+  const statusHint = (s: Stage): string | null => {
+    if (s === "plan" && current === "plan" && isLoading) return "generating\u2026";
+    if (s === "execute" && (current === "execute" || current === "result") && plan) {
+      const total = plan.graph.agents.length;
+      const done = Object.values(agentStates).filter(a => a.status === "completed" || a.status === "failed").length;
+      if (current === "execute") return `${done} / ${total} agents`;
+      return `${total} agents`;
+    }
+    return null;
+  };
+
   return (
-    <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
-      {STAGES.map(s => (
-        <button
-          key={s}
-          onClick={() => canSelect(s) && onSelect(s)}
-          disabled={!canSelect(s)}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-all capitalize
-            ${current === s ? "bg-white text-gray-900 shadow-sm" : canSelect(s) ? "text-gray-600 hover:bg-gray-50" : "text-gray-300 cursor-not-allowed"}`}
-        >
-          {s}
-        </button>
-      ))}
+    <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b">
+      <div className="max-w-5xl mx-auto px-6">
+        <div className="flex items-center h-12">
+          {STAGES.map((s, i) => {
+            const isDone = i < stageIdx;
+            const isCurrent = i === stageIdx;
+            const isPending = i > stageIdx;
+            const clickable = canSelect(s.key);
+            const hint = statusHint(s.key);
+
+            return (
+              <div key={s.key} className={`flex items-center ${i > 0 ? "flex-1" : ""}`}>
+                {i > 0 && (
+                  <div className={`flex-1 h-px transition-colors duration-300 ${isDone ? "bg-blue-400" : "bg-gray-200"}`} />
+                )}
+                <button
+                  onClick={() => clickable && onSelect(s.key)}
+                  disabled={!clickable}
+                  className={`flex items-center gap-2 group transition-all px-2 ${clickable ? "cursor-pointer" : "cursor-default"}`}
+                >
+                  <div className={`w-2.5 h-2.5 rounded-full border-2 transition-all duration-300 flex-shrink-0
+                    ${isDone ? "bg-blue-500 border-blue-500" : ""}
+                    ${isCurrent ? "border-blue-500 bg-blue-500 ring-4 ring-blue-100 animate-pulse-subtle" : ""}
+                    ${isPending ? "border-gray-300 bg-white" : ""}
+                  `} />
+                  <span className={`text-sm font-medium whitespace-nowrap transition-colors
+                    ${isCurrent ? "text-gray-900" : isDone ? "text-gray-500" : "text-gray-300"}
+                    ${clickable && !isCurrent ? "group-hover:text-gray-700" : ""}
+                  `}>
+                    {s.label}
+                    {hint && <span className="text-xs font-normal text-gray-400 ml-1">&middot; {hint}</span>}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -56,9 +113,59 @@ const GlobeIcon = () => (
   </svg>
 );
 
+function StageWrapper({
+  stage,
+  current,
+  stageRef,
+  onActivate,
+  children,
+}: {
+  stage: Stage;
+  current: Stage;
+  stageRef: React.RefObject<HTMLDivElement | null>;
+  onActivate?: () => void;
+  children: React.ReactNode;
+}) {
+  const stageIdx = STAGES.findIndex(s => s.key === stage);
+  const currentIdx = STAGES.findIndex(s => s.key === current);
+  const isNotCurrent = stageIdx !== currentIdx;
+  const isDone = stageIdx < currentIdx;
+  const isCurrent = stageIdx === currentIdx;
+  const isPending = stageIdx > currentIdx;
+  const clickable = isNotCurrent && !!onActivate;
+
+  return (
+    <div
+      ref={stageRef}
+      onClick={clickable ? onActivate : undefined}
+      className={`transition-all duration-500 scroll-mt-16 ${
+        isCurrent ? "opacity-100" : isDone ? "opacity-50 saturate-50 cursor-pointer hover:opacity-70" : isPending ? "opacity-30 cursor-pointer hover:opacity-50" : ""
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function App() {
-  const { stage, expectedAnswer, plan, graph, agentStates, finalAnswer, error, isLoading, subagentModel, generatePlan, executePlan, setSubagentModel, goToStage, reset } = useOrchestration();
+  const { stage, expectedAnswer, plan, graph, agentStates, finalAnswer, error, isLoading, subagentModel, generatePlan, executePlan, refinePlan, setSubagentModel, goToStage, reset } = useOrchestration();
   const [input, setInput] = useState({ problem: "", expected: "", mode: "custom" as Mode, dom: "high" as DomLevel });
+  const [refineInput, setRefineInput] = useState("");
+  const [openAgentId, setOpenAgentId] = useState<string | null>(null);
+
+  const stageRefs = {
+    input: useRef<HTMLDivElement>(null),
+    plan: useRef<HTMLDivElement>(null),
+    execute: useRef<HTMLDivElement>(null),
+    result: useRef<HTMLDivElement>(null),
+  };
+
+  useEffect(() => {
+    const ref = stageRefs[stage];
+    if (ref.current) {
+      ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [stage]);
 
   const isDirect = plan?.graph.direct_solution != null;
   const canSelect = (s: Stage) => {
@@ -69,11 +176,19 @@ export default function App() {
     return false;
   };
 
+  const handleNavSelect = (s: Stage) => {
+    goToStage(s);
+    setTimeout(() => {
+      stageRefs[s].current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-5xl mx-auto px-6 py-8">
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-3">
+      {/* Header */}
+      <div className="bg-white border-b">
+        <div className="max-w-5xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">MAS-Orchestra</h1>
               <p className="text-sm text-gray-500">Multi-Agent Orchestration Demo</p>
@@ -93,21 +208,32 @@ export default function App() {
               </a>
             </div>
           </div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 text-xs font-medium">
-              <span style={{ color: "#00A1E0" }}>Salesforce AI Research</span>
-              <span className="text-gray-300">•</span>
-              <span style={{ color: "#A31F34" }}>MIT</span>
-              <span className="text-gray-300">•</span>
-              <span style={{ color: "#C5050C" }}>UW Madison</span>
-            </div>
-            <StepNav current={stage} onSelect={goToStage} canSelect={canSelect} />
+          <div className="flex items-center gap-3 text-xs font-medium mt-2">
+            <span style={{ color: "#00A1E0" }}>Salesforce AI Research</span>
+            <span className="text-gray-300">&bull;</span>
+            <span style={{ color: "#A31F34" }}>MIT</span>
+            <span className="text-gray-300">&bull;</span>
+            <span style={{ color: "#C5050C" }}>UW Madison</span>
           </div>
         </div>
+      </div>
 
-        {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+      {/* Progress Rail */}
+      <ProgressRail
+        current={stage}
+        agentStates={agentStates}
+        plan={plan}
+        isLoading={isLoading}
+        onSelect={handleNavSelect}
+        canSelect={canSelect}
+      />
 
-        {stage === "input" && (
+      {/* All stages rendered vertically */}
+      <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+
+        {/* INPUT STAGE */}
+        <StageWrapper stage="input" current={stage} stageRef={stageRefs.input} onActivate={() => handleNavSelect("input")}>
           <div className="bg-white rounded-xl border p-6 space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Problem</label>
@@ -173,123 +299,183 @@ export default function App() {
                 generatePlan(input.problem.trim(), dataset, dom, input.expected.trim());
               }}
                 disabled={!input.problem.trim() || isLoading} className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300">
-                {isLoading ? "Generating..." : "Generate Plan →"}
+                {isLoading && stage === "input" ? "Generating\u2026" : "Generate Plan \u2192"}
               </button>
             </div>
           </div>
-        )}
+        </StageWrapper>
 
-        {stage === "plan" && plan && (
-          <div className="bg-white rounded-xl border p-6 space-y-6">
-            {plan.thinking && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-500 mb-2">Reasoning</h3>
-                <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg whitespace-pre-wrap">{plan.thinking}</p>
+        {/* PLAN STAGE */}
+        {plan && (
+          <StageWrapper stage="plan" current={stage} stageRef={stageRefs.plan} onActivate={() => handleNavSelect("plan")}>
+            <div className="bg-white rounded-xl border p-6 space-y-6">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-6 bg-blue-500 rounded-full" />
+                <h2 className="text-lg font-semibold text-gray-900">Plan</h2>
               </div>
-            )}
-            {isDirect ? (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 text-amber-700">Direct Solution</span>
-                  <span className="text-sm text-gray-500">Metaagent solved this directly</span>
+              {plan.thinking && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500 mb-2">Reasoning</h3>
+                  <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg whitespace-pre-wrap">{plan.thinking}</p>
                 </div>
-                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
-                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{plan.graph.direct_solution}</p>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <h3 className="text-sm font-medium text-gray-500 mb-2">Agents ({plan.graph.agents.length})</h3>
-                <div className="space-y-2">
-                  {plan.graph.agents.map(a => (
-                    <div key={a.id} className="p-3 bg-gray-50 rounded-lg space-y-2">
-                      <div className="flex items-center gap-3">
-                        <code className="text-sm font-mono text-gray-800">{a.id}</code>
-                        <Badge type={a.type} />
-                        <span className="text-sm text-gray-600">{a.description}</span>
-                      </div>
-                      {a.input && (
-                        <div className="pl-2 border-l-2 border-gray-200">
-                          <div className="text-xs font-medium text-gray-500 mb-0.5">Input</div>
-                          <code className="text-xs text-gray-700 whitespace-pre-wrap break-words block">{a.input}</code>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <details className="text-sm">
-              <summary className="text-gray-500 cursor-pointer">Raw XML</summary>
-              <pre className="mt-2 p-3 bg-slate-900 text-slate-300 rounded-lg overflow-auto max-h-48 text-xs">{plan.xml}</pre>
-            </details>
-            <div className="flex gap-3 pt-2">
-              <button onClick={() => goToStage("input")} className="px-4 py-2 border rounded-lg text-sm">← Back</button>
+              )}
               {isDirect ? (
-                <button onClick={() => goToStage("result")} className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">
-                  View Result →
-                </button>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 text-amber-700">Direct Solution</span>
+                    <span className="text-sm text-gray-500">Metaagent solved this directly</span>
+                  </div>
+                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+                    <p className="text-sm text-gray-800 whitespace-pre-wrap">{plan.graph.direct_solution}</p>
+                  </div>
+                </div>
               ) : (
-                <button onClick={executePlan} disabled={isLoading} className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:bg-gray-300">
-                  {isLoading ? "Executing..." : "Execute →"}
-                </button>
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500 mb-2">Agents ({plan.graph.agents.length})</h3>
+                  <div className="space-y-2">
+                    {plan.graph.agents.map(a => (
+                      <div key={a.id} className="p-3 bg-gray-50 rounded-lg space-y-2">
+                        <div className="flex items-center gap-3">
+                          <code className="text-sm font-mono text-gray-800">{a.id}</code>
+                          <Badge type={a.type} />
+                          <span className="text-sm text-gray-600">{a.description}</span>
+                        </div>
+                        {a.input && (
+                          <div className="pl-2 border-l-2 border-gray-200">
+                            <div className="text-xs font-medium text-gray-500 mb-0.5">Input</div>
+                            <code className="text-xs text-gray-700 whitespace-pre-wrap break-words block">{a.input}</code>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <details className="text-sm">
+                <summary className="text-gray-500 cursor-pointer">Raw XML</summary>
+                <pre className="mt-2 p-3 bg-slate-900 text-slate-300 rounded-lg overflow-auto max-h-48 text-xs">{plan.xml}</pre>
+              </details>
+              {stage === "plan" && (
+                <div className="space-y-4 pt-2">
+                  {!isDirect && (
+                    <div className="flex gap-2">
+                      <input
+                        value={refineInput}
+                        onChange={e => setRefineInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" && refineInput.trim() && !isLoading) {
+                            refinePlan(refineInput.trim());
+                            setRefineInput("");
+                          }
+                        }}
+                        placeholder="Revise plan... e.g. &quot;add a verifier agent&quot; or &quot;swap CoT for Debate&quot;"
+                        className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                        disabled={isLoading}
+                      />
+                      <button
+                        onClick={() => {
+                          if (refineInput.trim() && !isLoading) {
+                            refinePlan(refineInput.trim());
+                            setRefineInput("");
+                          }
+                        }}
+                        disabled={!refineInput.trim() || isLoading}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300"
+                      >
+                        {isLoading ? "Refining\u2026" : "Refine"}
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex gap-3">
+                    <button onClick={() => goToStage("input")} className="px-4 py-2 border rounded-lg text-sm">&larr; Back</button>
+                    {isDirect ? (
+                      <button onClick={() => goToStage("result")} className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">
+                        View Result &rarr;
+                      </button>
+                    ) : (
+                      <button onClick={executePlan} disabled={isLoading} className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:bg-gray-300">
+                        {isLoading ? "Executing\u2026" : "Execute \u2192"}
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
-          </div>
+          </StageWrapper>
         )}
 
-        {(stage === "execute" || (stage === "result" && !isDirect)) && graph && graph.agents.length > 0 && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="bg-white rounded-xl border p-4">
-                <h3 className="text-sm font-medium text-gray-500 mb-3">Graph</h3>
-                <GraphViewer graph={graph} agentStates={agentStates} />
+        {/* EXECUTE STAGE */}
+        {graph && graph.agents.length > 0 && !isDirect && (
+          <StageWrapper stage="execute" current={stage} stageRef={stageRefs.execute} onActivate={() => handleNavSelect("execute")}>
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="w-1.5 h-6 bg-emerald-500 rounded-full" />
+                <h2 className="text-lg font-semibold text-gray-900">Execute</h2>
               </div>
               <div className="bg-white rounded-xl border p-4">
-                <h3 className="text-sm font-medium text-gray-500 mb-3">Outputs</h3>
-                <AgentOutputs graph={graph} agentStates={agentStates} />
+                <GraphViewer graph={graph} agentStates={agentStates} openAgentId={openAgentId} onOpenAgentHandled={() => setOpenAgentId(null)} />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {graph.agents.map(a => {
+                  const s = agentStates[a.id];
+                  const status = s?.status || "pending";
+                  const dotColor: Record<string, string> = {
+                    pending: "bg-gray-300",
+                    running: "bg-amber-400 animate-pulse",
+                    completed: "bg-emerald-400",
+                    failed: "bg-red-400",
+                  };
+                  const clickable = status === "completed" || status === "failed";
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => clickable && setOpenAgentId(a.id)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 bg-white border rounded-lg text-xs transition-colors
+                        ${clickable ? "hover:bg-gray-50 hover:border-gray-300 cursor-pointer" : "cursor-default"}`}
+                    >
+                      <div className={`w-2 h-2 rounded-full ${dotColor[status]}`} />
+                      <span className="font-mono text-gray-700">{a.id}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
-            {stage === "result" && finalAnswer && (
-              <div className="bg-white rounded-xl border p-6 space-y-4">
-                <h3 className="text-sm font-medium text-gray-500">Final Answer</h3>
-                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
-                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{finalAnswer}</p>
+          </StageWrapper>
+        )}
+
+        {/* RESULT STAGE */}
+        {(finalAnswer || isDirect) && (
+          <StageWrapper stage="result" current={stage} stageRef={stageRefs.result} onActivate={() => handleNavSelect("result")}>
+            <div className="bg-white rounded-xl border p-6 space-y-4">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-6 bg-amber-500 rounded-full" />
+                <h2 className="text-lg font-semibold text-gray-900">Result</h2>
+              </div>
+              {isDirect && (
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 text-amber-700">Direct Solution</span>
+                  <span className="text-sm text-gray-500">Metaagent solved this without delegation</span>
                 </div>
-                {expectedAnswer && (
-                  <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-2">Expected Answer</h3>
-                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <p className="text-sm text-gray-800">{expectedAnswer}</p>
-                    </div>
+              )}
+              <h3 className="text-sm font-medium text-gray-500">Final Answer</h3>
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <p className="text-sm text-gray-800 whitespace-pre-wrap">
+                  {isDirect ? plan?.graph.direct_solution : finalAnswer}
+                </p>
+              </div>
+              {expectedAnswer && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500 mb-2">Expected Answer</h3>
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-gray-800">{expectedAnswer}</p>
                   </div>
-                )}
-                <button onClick={reset} className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">New Problem</button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {stage === "result" && isDirect && (
-          <div className="bg-white rounded-xl border p-6 space-y-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 text-amber-700">Direct Solution</span>
-              <span className="text-sm text-gray-500">Metaagent solved this without delegation</span>
-            </div>
-            <h3 className="text-sm font-medium text-gray-500">Final Answer</h3>
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
-              <p className="text-sm text-gray-800 whitespace-pre-wrap">{plan?.graph.direct_solution}</p>
-            </div>
-            {expectedAnswer && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-500 mb-2">Expected Answer</h3>
-                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm text-gray-800">{expectedAnswer}</p>
                 </div>
-              </div>
-            )}
-            <button onClick={reset} className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">New Problem</button>
-          </div>
+              )}
+              {stage === "result" && (
+                <button onClick={reset} className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">New Problem</button>
+              )}
+            </div>
+          </StageWrapper>
         )}
       </div>
     </div>

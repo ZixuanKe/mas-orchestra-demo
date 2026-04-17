@@ -100,9 +100,28 @@ export function useOrchestration() {
     }
   }, [state.plan, state.problem, state.subagentModel]);
 
+  const refinePlan = useCallback(async (userMessage: string) => {
+    if (!state.plan) return;
+    setState(s => ({ ...s, isLoading: true, error: null }));
+    track("plan_refined", { message_length: userMessage.length });
+    try {
+      const res = await fetch("/refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ problem: state.problem, current_xml: state.plan.xml, user_message: userMessage, dom: state.dom }),
+      });
+      if (!res.ok) throw new Error(`Refine failed: ${res.status}`);
+      const plan: Plan = await res.json();
+      const agentStates = Object.fromEntries(plan.graph.agents.map(a => [a.id, { id: a.id, status: "pending" as const }]));
+      setState(s => ({ ...s, plan, graph: plan.graph, agentStates, finalAnswer: plan.graph.direct_solution || null, isLoading: false }));
+    } catch (err) {
+      setState(s => ({ ...s, error: String(err), isLoading: false }));
+    }
+  }, [state.plan, state.problem, state.dom]);
+
   const setSubagentModel = useCallback((subagentModel: SubagentModel) => setState(s => ({ ...s, subagentModel })), []);
   const goToStage = useCallback((stage: Stage) => setState(s => ({ ...s, stage, error: null })), []);
   const reset = useCallback(() => setState(initial), []);
 
-  return { ...state, generatePlan, executePlan, setSubagentModel, goToStage, reset };
+  return { ...state, generatePlan, executePlan, refinePlan, setSubagentModel, goToStage, reset };
 }
