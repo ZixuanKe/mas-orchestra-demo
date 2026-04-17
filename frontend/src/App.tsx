@@ -365,10 +365,9 @@ export default function App() {
                         onKeyDown={e => {
                           if (e.key === "Enter" && refineInput.trim() && !isLoading) {
                             refinePlan(refineInput.trim());
-                            setRefineInput("");
                           }
                         }}
-                        placeholder="Revise plan... e.g. &quot;add a verifier agent&quot; or &quot;swap CoT for Debate&quot;"
+                        placeholder="Revise plan... e.g. &quot;add 100 agents&quot; or &quot;swap CoT for Debate&quot;"
                         className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
                         disabled={isLoading}
                       />
@@ -376,7 +375,6 @@ export default function App() {
                         onClick={() => {
                           if (refineInput.trim() && !isLoading) {
                             refinePlan(refineInput.trim());
-                            setRefineInput("");
                           }
                         }}
                         disabled={!refineInput.trim() || isLoading}
