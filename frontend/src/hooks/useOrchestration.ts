@@ -15,6 +15,7 @@ interface State {
   finalAnswer: string | null;
   error: string | null;
   isLoading: boolean;
+  isRefining: boolean;
 }
 
 const initial: State = {
@@ -30,6 +31,7 @@ const initial: State = {
   finalAnswer: null,
   error: null,
   isLoading: false,
+  isRefining: false,
 };
 
 export function useOrchestration() {
@@ -102,7 +104,7 @@ export function useOrchestration() {
 
   const refinePlan = useCallback(async (userMessage: string) => {
     if (!state.plan) return;
-    setState(s => ({ ...s, isLoading: true, error: null }));
+    setState(s => ({ ...s, isRefining: true, error: null }));
     track("plan_refined", { message_length: userMessage.length });
     try {
       const res = await fetch("/refine", {
@@ -113,9 +115,9 @@ export function useOrchestration() {
       if (!res.ok) throw new Error(`Refine failed: ${res.status}`);
       const plan: Plan = await res.json();
       const agentStates = Object.fromEntries(plan.graph.agents.map(a => [a.id, { id: a.id, status: "pending" as const }]));
-      setState(s => ({ ...s, plan, graph: plan.graph, agentStates, finalAnswer: plan.graph.direct_solution || null, isLoading: false }));
+      setState(s => ({ ...s, plan, graph: plan.graph, agentStates, finalAnswer: plan.graph.direct_solution || null, isRefining: false }));
     } catch (err) {
-      setState(s => ({ ...s, error: String(err), isLoading: false }));
+      setState(s => ({ ...s, error: String(err), isRefining: false }));
     }
   }, [state.plan, state.problem, state.dom]);
 

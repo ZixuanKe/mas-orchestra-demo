@@ -148,7 +148,7 @@ function StageWrapper({
 }
 
 export default function App() {
-  const { stage, expectedAnswer, plan, graph, agentStates, finalAnswer, error, isLoading, subagentModel, generatePlan, executePlan, refinePlan, setSubagentModel, goToStage, reset } = useOrchestration();
+  const { stage, expectedAnswer, plan, graph, agentStates, finalAnswer, error, isLoading, isRefining, subagentModel, generatePlan, executePlan, refinePlan, setSubagentModel, goToStage, reset } = useOrchestration();
   const [input, setInput] = useState({ problem: "", expected: "", mode: "custom" as Mode, dom: "high" as DomLevel });
   const [refineInput, setRefineInput] = useState("");
   const [openAgentId, setOpenAgentId] = useState<string | null>(null);
@@ -363,24 +363,24 @@ export default function App() {
                         value={refineInput}
                         onChange={e => setRefineInput(e.target.value)}
                         onKeyDown={e => {
-                          if (e.key === "Enter" && refineInput.trim() && !isLoading) {
+                          if (e.key === "Enter" && refineInput.trim() && !isRefining) {
                             refinePlan(refineInput.trim());
                           }
                         }}
                         placeholder="Revise plan... e.g. &quot;add 100 agents&quot; or &quot;swap CoT for Debate&quot;"
                         className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                        disabled={isLoading}
+                        disabled={isRefining}
                       />
                       <button
                         onClick={() => {
-                          if (refineInput.trim() && !isLoading) {
+                          if (refineInput.trim() && !isRefining) {
                             refinePlan(refineInput.trim());
                           }
                         }}
-                        disabled={!refineInput.trim() || isLoading}
+                        disabled={!refineInput.trim() || isRefining}
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300"
                       >
-                        {isLoading ? "Refining\u2026" : "Refine"}
+                        {isRefining ? "Refining\u2026" : "Refine"}
                       </button>
                     </div>
                   )}
@@ -391,7 +391,7 @@ export default function App() {
                         View Result &rarr;
                       </button>
                     ) : (
-                      <button onClick={executePlan} disabled={isLoading} className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:bg-gray-300">
+                      <button onClick={executePlan} disabled={isLoading || isRefining} className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:bg-gray-300">
                         {isLoading ? "Executing\u2026" : "Execute \u2192"}
                       </button>
                     )}
