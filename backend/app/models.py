@@ -27,6 +27,33 @@ class AgentType(str, Enum):
     DEBATE = "DebateAgent"
     REFLEXION = "ReflexionAgent"
     WEBSEARCH = "WebSearchAgent"
+    CUSTOM = "CustomAgent"
+
+
+class CustomStrategy(str, Enum):
+    SINGLE = "single"
+    MULTI_SAMPLE = "multi_sample"
+    CRITIQUE = "critique"
+    PIPELINE = "pipeline"
+
+
+class CustomTool(BaseModel):
+    name: str
+    description: str
+    parameters: dict = {}  # JSON Schema for the tool's parameters
+
+
+class CustomAgentConfig(BaseModel):
+    name: str
+    strategy: CustomStrategy
+    system_prompt: str
+    num_samples: int | None = 3
+    num_rounds: int | None = 2
+    critic_prompt: str | None = ""
+    steps: list[str] | None = []
+    enable_web_search: bool = False
+    enable_think_tool: bool = False
+    tools: list[CustomTool] | None = []
 
 
 class Agent(BaseModel):
@@ -35,6 +62,7 @@ class Agent(BaseModel):
     description: str
     input: str
     depends_on: list[str]
+    custom_config: CustomAgentConfig | None = None
 
 
 class Edge(BaseModel):

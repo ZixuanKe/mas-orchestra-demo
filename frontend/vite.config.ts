@@ -9,6 +9,7 @@ export default defineConfig({
     proxy: {
       '/plan': 'http://localhost:8005',
       '/refine': 'http://localhost:8005',
+      '/design-agent': 'http://localhost:8005',
       '/execute': 'http://localhost:8005',
       '/run': 'http://localhost:8005',
       '/health': 'http://localhost:8005',

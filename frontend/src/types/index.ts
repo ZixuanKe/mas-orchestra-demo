@@ -1,4 +1,4 @@
-export type AgentType = "CoTAgent" | "SCAgent" | "DebateAgent" | "ReflexionAgent" | "WebSearchAgent";
+export type AgentType = "CoTAgent" | "SCAgent" | "DebateAgent" | "ReflexionAgent" | "WebSearchAgent" | "CustomAgent";
 export type AgentStatus = "pending" | "running" | "completed" | "failed";
 export type DomLevel = "low" | "high" | "high_extensive";
 
@@ -44,12 +44,26 @@ export interface DatasetSample {
   answer: string;
 }
 
+export interface CustomAgentConfig {
+  name: string;
+  strategy: "single" | "multi_sample" | "critique" | "pipeline";
+  system_prompt: string;
+  num_samples?: number;
+  num_rounds?: number;
+  critic_prompt?: string;
+  steps?: string[];
+  enable_web_search?: boolean;
+  enable_think_tool?: boolean;
+  tools?: { name: string; description: string; parameters?: Record<string, unknown> }[];
+}
+
 export interface Agent {
   id: string;
   type: AgentType;
   description: string;
   input: string;
   depends_on: string[];
+  custom_config?: CustomAgentConfig | null;
 }
 
 export interface Edge {
@@ -75,4 +89,10 @@ export interface Plan {
   xml: string;
   graph: Graph;
   thinking: string | null;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  plan?: Plan;
 }

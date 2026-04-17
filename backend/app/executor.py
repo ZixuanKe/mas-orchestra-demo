@@ -12,7 +12,7 @@ import asyncio
 from datetime import datetime
 from openai import AsyncOpenAI
 
-from .models import Agent, AgentType
+from .models import Agent, AgentType, CustomStrategy, CustomTool
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +171,9 @@ async def _llm_call(system: str, user: str, model: str, max_tokens: int = 4096) 
     return res.choices[0].message.content or ""
 
 
+_search_semaphore = asyncio.Semaphore(2)  # max 2 concurrent searches to avoid rate limits
+
+
 async def _duckduckgo_search(query: str, max_results: int = 5) -> str:
     """Execute a DuckDuckGo search and format results for the model."""
     try:
@@ -178,23 +181,24 @@ async def _duckduckgo_search(query: str, max_results: int = 5) -> str:
     except ImportError:
         return "[ddgs not installed — pip install ddgs]"
 
-    try:
-        results = await asyncio.to_thread(
-            lambda: list(DDGS().text(query, max_results=max_results))
-        )
-    except Exception as e:
-        return f"Search error: {e}"
+    async with _search_semaphore:
+        try:
+            results = await asyncio.to_thread(
+                lambda: list(DDGS().text(query, max_results=max_results))
+            )
+        except Exception as e:
+            return f"Search error: {e}"
 
-    if not results:
-        return "No search results found. Please try a different search query."
+        if not results:
+            return "No search results found. Please try a different search query."
 
-    out = ["Search results:\n"]
-    for i, r in enumerate(results, 1):
-        out.append(f"--- SOURCE {i}: {r.get('title', 'Untitled')} ---")
-        out.append(f"URL: {r.get('href', '')}\n")
-        out.append(f"CONTENT:\n{r.get('body', '')}\n")
-        out.append("-" * 80)
-    return "\n".join(out)
+        out = ["Search results:\n"]
+        for i, r in enumerate(results, 1):
+            out.append(f"--- SOURCE {i}: {r.get('title', 'Untitled')} ---")
+            out.append(f"URL: {r.get('href', '')}\n")
+            out.append(f"CONTENT:\n{r.get('body', '')}\n")
+            out.append("-" * 80)
+        return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +363,143 @@ async def _execute_websearch(agent: Agent, problem: str, ctx: dict[str, str], mo
     return res.choices[0].message.content or f"[{agent.id} returned empty response]"
 
 
+def _build_custom_tools(cfg) -> list[dict]:
+    """Build OpenAI tool definitions from a CustomAgentConfig."""
+    tools = []
+    if cfg.enable_web_search:
+        tools.append(WEBSEARCH_TOOLS[0])  # web_search
+    if cfg.enable_think_tool:
+        tools.append(WEBSEARCH_TOOLS[1])  # think_tool
+    if cfg.tools:
+        for t in cfg.tools:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters or {"type": "object", "properties": {}},
+                },
+            })
+    return tools
+
+
+async def _tool_calling_loop(
+    system: str, user: str, model: str, tools: list[dict], agent_id: str, max_iterations: int = 8
+) -> str:
+    """Run an LLM with tools in a loop until it produces a final text response."""
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    is_reasoning = model.startswith("o")
+    base_kwargs: dict = dict(model=model, tools=tools, max_completion_tokens=16000)
+    if not is_reasoning:
+        base_kwargs["temperature"] = 0.5
+
+    for iteration in range(max_iterations):
+        print(f"  Custom {agent_id}: tool loop iteration {iteration + 1}/{max_iterations}")
+        res = await get_client().chat.completions.create(messages=messages, **base_kwargs)
+        msg = res.choices[0].message
+        messages.append(msg)
+
+        if not msg.tool_calls:
+            return msg.content or f"[{agent_id} returned empty response]"
+
+        for tc in msg.tool_calls:
+            args = json.loads(tc.function.arguments)
+            if tc.function.name == "web_search":
+                query = args.get("search_query", "")
+                print(f"    web_search({query[:60]}...)")
+                result = await _duckduckgo_search(query)
+            elif tc.function.name == "think_tool":
+                reflection = args.get("reflection", "")
+                print(f"    think_tool({reflection[:60]}...)")
+                result = f"Reflection recorded: {reflection}"
+            else:
+                # Custom tool — return a placeholder indicating the tool was called
+                print(f"    {tc.function.name}({json.dumps(args)[:80]}...)")
+                result = f"Tool '{tc.function.name}' called with: {json.dumps(args)}\n[Tool execution simulated — integrate real implementations as needed]"
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+
+    # Max iterations — force a final answer
+    final_kwargs = {k: v for k, v in base_kwargs.items() if k != "tools"}
+    res = await get_client().chat.completions.create(messages=messages, **final_kwargs)
+    return res.choices[0].message.content or f"[{agent_id} returned empty response]"
+
+
+TOOL_MODEL = "gpt-4.1"  # Stronger model for tool-calling / extended reasoning
+
+
+async def _execute_custom(agent: Agent, problem: str, ctx: dict[str, str], model: str) -> str:
+    """Execute a user-designed custom agent based on its config."""
+    cfg = agent.custom_config
+    if not cfg:
+        return await _execute_cot(agent, problem, ctx, model)
+
+    task = resolve_input(agent.input, problem, ctx)
+    system = f"{cfg.system_prompt}\n\nRole: {agent.description}"
+    question = f"Original question: {problem}\n\nYour task: {task}"
+    tools = _build_custom_tools(cfg)
+    # Use a stronger model when tools are enabled
+    effective_model = TOOL_MODEL if tools else model
+
+    if cfg.strategy == CustomStrategy.SINGLE:
+        if tools:
+            print(f"  Custom {agent.id}: single call with {len(tools)} tools (model={effective_model})")
+            return await _tool_calling_loop(system, question, effective_model, tools, agent.id)
+        print(f"  Custom {agent.id}: single call")
+        return await _llm_call(system, question, model) or f"[{agent.id} returned empty response]"
+
+    if cfg.strategy == CustomStrategy.MULTI_SAMPLE:
+        n = cfg.num_samples if cfg.num_samples else 3
+        print(f"  Custom {agent.id}: {n} parallel samples (model={effective_model})")
+        samples = await asyncio.gather(*[_llm_call(system, question, effective_model) for _ in range(n)])
+        numbered = "\n\n".join(f"--- Sample {i+1} ---\n{s}" for i, s in enumerate(samples))
+        vote_user = (
+            f"{question}\n\n"
+            f"You ran {n} independent attempts:\n\n{numbered}\n\n"
+            "Identify the consensus answer across these samples. Output the single best final answer."
+        )
+        return await _llm_call(
+            "You are an expert judge selecting the most consistent answer.", vote_user, effective_model
+        ) or f"[{agent.id} returned empty response]"
+
+    if cfg.strategy == CustomStrategy.CRITIQUE:
+        rounds = cfg.num_rounds if cfg.num_rounds else 2
+        critic_prompt = cfg.critic_prompt if cfg.critic_prompt else "Review the answer above and identify any flaws or improvements."
+        print(f"  Custom {agent.id}: initial attempt")
+        answer = await _llm_call(system, question, effective_model)
+        for i in range(rounds):
+            print(f"  Custom {agent.id}: critic round {i+1}/{rounds}")
+            critic_user = f"{question}\n\nCurrent answer:\n{answer}\n\n{critic_prompt}"
+            feedback = await _llm_call(system, critic_user, effective_model)
+            first_line = feedback.strip().splitlines()[0] if feedback.strip() else ""
+            if "CORRECT: TRUE" in first_line.upper() or "NO ISSUES" in first_line.upper():
+                break
+            print(f"  Custom {agent.id}: refine round {i+1}")
+            refine_user = (
+                f"{question}\n\nPrevious attempt:\n{answer}\n\n"
+                f"Feedback:\n{feedback}\n\nProduce an improved answer."
+            )
+            answer = await _llm_call(system, refine_user, effective_model)
+        return answer or f"[{agent.id} returned empty response]"
+
+    if cfg.strategy == CustomStrategy.PIPELINE:
+        steps = cfg.steps if cfg.steps else ["Solve the task step by step."]
+        print(f"  Custom {agent.id}: pipeline with {len(steps)} steps")
+        accumulator = ""
+        for i, step_prompt in enumerate(steps):
+            print(f"  Custom {agent.id}: step {i+1}/{len(steps)}")
+            step_user = f"{question}\n\n"
+            if accumulator:
+                step_user += f"Previous steps output:\n{accumulator}\n\n"
+            step_user += f"Current step instruction: {step_prompt}"
+            accumulator = await _llm_call(system, step_user, effective_model)
+        return accumulator or f"[{agent.id} returned empty response]"
+
+    return await _execute_cot(agent, problem, ctx, model)
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -382,7 +523,8 @@ async def execute_agent(
             return await _execute_reflexion(agent, problem, ctx, model)
         if agent.type == AgentType.WEBSEARCH:
             return await _execute_websearch(agent, problem, ctx, model)
-        # Unknown type — fall back to CoT
+        if agent.type == AgentType.CUSTOM:
+            return await _execute_custom(agent, problem, ctx, model)
         return await _execute_cot(agent, problem, ctx, model)
     except Exception as e:
         raise RuntimeError(f"Agent {agent.id} failed: {e}") from e

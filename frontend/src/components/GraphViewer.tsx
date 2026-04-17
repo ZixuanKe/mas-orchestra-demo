@@ -16,6 +16,7 @@ const COLORS: Record<AgentType, string> = {
   DebateAgent: "#f59e0b",
   ReflexionAgent: "#10b981",
   WebSearchAgent: "#ef4444",
+  CustomAgent: "#ec4899",
 };
 
 const STATUS_BORDER: Record<string, string> = {
@@ -99,7 +100,15 @@ export function GraphViewer({ graph, agentStates, openAgentId, onOpenAgentHandle
       const layer = graph.agents
         .filter(a => !placed.has(a.id) && a.depends_on.every(d => placed.has(d)))
         .map(a => a.id);
-      if (!layer.length) break;
+      if (!layer.length) {
+        // Unplaceable agents (broken deps) — force them into a final layer
+        const remaining = graph.agents.filter(a => !placed.has(a.id)).map(a => a.id);
+        if (remaining.length) {
+          remaining.forEach(id => placed.add(id));
+          layers.push(remaining);
+        }
+        break;
+      }
       layer.forEach(id => placed.add(id));
       layers.push(layer);
     }
@@ -145,7 +154,15 @@ export function GraphViewer({ graph, agentStates, openAgentId, onOpenAgentHandle
   const selectedAgentData = selectedAgent ? agentMap.get(selectedAgent) : null;
   const selectedState = selectedAgent ? agentStates[selectedAgent] : null;
 
-  const flowContent = (
+  const flowContent = nodes.length === 0 ? (
+    <div className="flex items-center justify-center h-full">
+      <div className="text-center p-6">
+        <svg className="w-10 h-10 mx-auto mb-3 text-amber-400" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" /><path d="M12 15.75h.007v.008H12v-.008z" /></svg>
+        <p className="text-sm font-medium text-gray-700">Graph could not be rendered</p>
+        <p className="text-xs text-gray-400 mt-1">{graph.agents.length} agents parsed but layout failed — check XML for dependency issues</p>
+      </div>
+    </div>
+  ) : (
     <ReactFlow
       nodes={nodes}
       edges={edges}
@@ -158,7 +175,7 @@ export function GraphViewer({ graph, agentStates, openAgentId, onOpenAgentHandle
     >
       <Background color="#e5e7eb" gap={20} />
       <Controls />
-      {fullscreen && <MiniMap pannable zoomable />}
+      {fullscreen && <MiniMap pannable zoomable maskColor="rgba(0,0,0,0.08)" nodeColor="#6b7280" nodeStrokeColor="#4b5563" nodeStrokeWidth={2} style={{ border: "1px solid #d1d5db", background: "#f3f4f6" }} />}
     </ReactFlow>
   );
 

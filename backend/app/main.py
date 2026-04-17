@@ -19,9 +19,10 @@ from .parser import parse, topo_sort
 from .metaagent import call_metaagent
 from .executor import execute_agent
 from .refine import refine_plan
+from .designer import design_agent
 
 # limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="MAS-Orchestra Demo")
+app = FastAPI(title="MAS-Orchestra")
 # app.state.limiter = limiter
 # app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -42,8 +43,20 @@ class PlanResponse(BaseModel):
 class RefineRequest(BaseModel):
     problem: str
     current_xml: str
-    user_message: str
+    messages: list[dict] = []
     dom: DomLevel | None = None
+    custom_agents: list[dict] = []
+
+
+class RefineResponse(BaseModel):
+    message: str
+    xml: str | None = None
+    graph: dict | None = None
+    thinking: str | None = None
+
+
+class DesignAgentRequest(BaseModel):
+    description: str
 
 
 class ExecuteRequest(BaseModel):
@@ -71,16 +84,56 @@ async def plan(req: PlanRequest) -> PlanResponse:
 
 
 @app.post("/refine")
-async def refine(req: RefineRequest) -> PlanResponse:
+async def refine(req: RefineRequest) -> RefineResponse:
     dom_level = req.dom or DomLevel.HIGH
-    xml = await refine_plan(req.current_xml, req.user_message, req.problem)
-    match = re.search(r"<thinking>(.*?)</thinking>", xml, re.DOTALL | re.IGNORECASE)
-    thinking = match.group(1).strip() if match else None
-    graph = parse(xml, dom_level.value)
-    return PlanResponse(xml=xml, graph=graph.model_dump(), thinking=thinking)
+
+    custom_hint = ""
+    if req.custom_agents:
+        lines = []
+        for c in req.custom_agents:
+            name = c.get("name", "CustomAgent")
+            strategy = c.get("strategy", "single")
+            prompt = c.get("system_prompt", "")[:200]
+            lines.append(f"- {name} (strategy: {strategy}): {prompt}")
+        custom_hint = "The user has designed these custom agents available for use:\n" + "\n".join(lines)
+
+    raw = await refine_plan(req.problem, req.current_xml, req.messages, custom_hint)
+
+    # Check for truncation
+    truncated = "<truncation_warning>" in raw
+
+    # Extract message
+    msg_match = re.search(r"<message>(.*?)</message>", raw, re.DOTALL | re.IGNORECASE)
+    message = msg_match.group(1).strip() if msg_match else raw.strip()
+    if truncated:
+        message += "\n\n⚠️ Response was truncated — the plan may be incomplete. Try requesting fewer agents."
+
+    # Check if there's a plan (has <agent> tags)
+    has_plan = "<agent_id>" in raw.lower()
+    if not has_plan:
+        return RefineResponse(message=message)
+
+    thinking_match = re.search(r"<thinking>(.*?)</thinking>", raw, re.DOTALL | re.IGNORECASE)
+    thinking = thinking_match.group(1).strip() if thinking_match else None
+    try:
+        graph = parse(raw, dom_level.value)
+        if not graph.agents:
+            print(f"[refine] Warning: parsed 0 agents from XML with <agent_id> tags")
+            return RefineResponse(message=f"{message}\n\n⚠️ Plan XML was detected but no agents could be parsed.")
+        print(f"[refine] Parsed {len(graph.agents)} agents, {len(graph.edges)} edges, sink={graph.answer_agent}")
+        return RefineResponse(message=message, xml=raw, graph=graph.model_dump(), thinking=thinking)
+    except Exception as e:
+        print(f"[refine] Parse error: {e}")
+        return RefineResponse(message=f"{message}\n\n⚠️ Failed to parse plan: {e}")
 
 
-MAX_CONCURRENT_AGENTS = 5
+@app.post("/design-agent")
+async def design_agent_endpoint(req: DesignAgentRequest):
+    config = await design_agent(req.description)
+    return config.model_dump()
+
+
+MAX_CONCURRENT_AGENTS = 10
 
 
 async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "gpt-4.1-mini"):

@@ -18,6 +18,7 @@ def to_agent_type(name: str) -> AgentType:
         "debate": AgentType.DEBATE, "debateagent": AgentType.DEBATE,
         "reflexion": AgentType.REFLEXION, "reflexionagent": AgentType.REFLEXION,
         "websearch": AgentType.WEBSEARCH, "websearchagent": AgentType.WEBSEARCH,
+        "custom": AgentType.CUSTOM, "customagent": AgentType.CUSTOM,
     }
     return types.get(name.lower().strip(), AgentType.COT)
 
@@ -51,19 +52,28 @@ def parse(xml: str, dom_level: str = "high") -> Graph:
             direct_solution=None,
         )
 
-    agents = []
+    # First pass: collect all agent IDs
+    raw_agents = []
     for block in extract_all(xml, "agent"):
         aid = extract(block, "agent_id")
         if not aid:
             continue
         req = extract(block, "required_arguments")
         inp = extract(req, "agent_input")
+        raw_agents.append((aid, block, inp))
+
+    agent_ids = {a[0] for a in raw_agents}
+
+    # Second pass: build agents with deps filtered to real agent IDs only
+    agents = []
+    for aid, block, inp in raw_agents:
+        deps = [d for d in parse_deps(inp) if d in agent_ids]
         agents.append(Agent(
             id=aid,
             type=to_agent_type(extract(block, "agent_name") or "CoTAgent"),
             description=extract(block, "agent_description"),
             input=inp,
-            depends_on=parse_deps(inp),
+            depends_on=deps,
         ))
 
     edges: list[Edge] = []
