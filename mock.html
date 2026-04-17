@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MAS-Orchestra — redesign mock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" />
+<style>
+  :root {
+    --ink-0: #07081a;
+    --ink-1: #0b0f26;
+    --ink-2: #121735;
+    --ink-3: #1c2450;
+    --fog:   rgba(255,255,255,0.06);
+    --fog-2: rgba(255,255,255,0.10);
+    --line:  rgba(255,255,255,0.08);
+    --text:  #e8ebff;
+    --muted: #8791b8;
+    --dim:   #4a527a;
+
+    --gold:   #e8b547;
+    --gold-2: #ffd27a;
+    --violet: #6f7bff;
+    --mint:   #59e3a7;
+    --rose:   #ff7a9c;
+
+    /* agent palette */
+    --cot:     #6ea8ff;
+    --sc:      #b28bff;
+    --debate:  #ffb453;
+    --reflex:  #5be3b8;
+    --web:     #ff7a9c;
+  }
+
+  *,*::before,*::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Manrope", system-ui, sans-serif;
+    color: var(--text);
+    background: var(--ink-0);
+    min-height: 100vh;
+    overflow-x: hidden;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- Layered animated background ---------- */
+  .bg {
+    position: fixed; inset: 0; z-index: -2;
+    background:
+      radial-gradient(1100px 800px at 15% 95%, rgba(232,181,71,0.22), transparent 60%),
+      radial-gradient(900px 700px at 90% 5%, rgba(111,123,255,0.20), transparent 65%),
+      radial-gradient(600px 500px at 50% 60%, rgba(91,227,184,0.08), transparent 70%),
+      linear-gradient(180deg, var(--ink-0) 0%, var(--ink-1) 60%, var(--ink-0) 100%);
+  }
+  .grain {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    opacity: 0.35; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+  .mesh {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.35;
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(255,255,255,0.10) 1px, transparent 1.5px);
+    background-size: 32px 32px;
+    animation: drift 40s linear infinite;
+  }
+  @keyframes drift {
+    from { background-position: 0 0; }
+    to   { background-position: 320px 160px; }
+  }
+
+  /* ---------- Top progress rail ---------- */
+  .rail-wrap {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    background: linear-gradient(180deg, rgba(7,8,26,0.85), rgba(7,8,26,0.55));
+    border-bottom: 1px solid var(--line);
+  }
+  .rail-inner {
+    max-width: 1120px; margin: 0 auto;
+    padding: 14px 28px;
+    display: flex; align-items: center; gap: 28px;
+  }
+
+  .wordmark { display: flex; align-items: center; gap: 12px; }
+  .wordmark svg { width: 34px; height: 34px; }
+  .wordmark .name {
+    font-family: "Instrument Serif", serif;
+    font-size: 26px; letter-spacing: 0.3px; color: var(--text);
+  }
+  .wordmark .name em {
+    color: var(--gold); font-style: italic;
+  }
+  .wordmark .tag {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px; color: var(--muted); letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  .rail { flex: 1; display: flex; align-items: center; gap: 14px; }
+  .step { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .dot {
+    width: 12px; height: 12px; border-radius: 999px;
+    border: 1.5px solid var(--dim);
+    background: transparent;
+    flex: 0 0 auto;
+    position: relative;
+  }
+  .step.done .dot {
+    background: var(--gold); border-color: var(--gold); opacity: 0.55;
+  }
+  .step.done .dot::after {
+    content: ""; position: absolute; inset: 3px;
+    border-radius: 999px; background: var(--ink-0);
+  }
+  .step.current .dot {
+    background: var(--gold); border-color: var(--gold-2);
+    box-shadow: 0 0 0 5px rgba(232,181,71,0.18), 0 0 24px rgba(232,181,71,0.55);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 5px rgba(232,181,71,0.15), 0 0 20px rgba(232,181,71,0.45); }
+    50%     { box-shadow: 0 0 0 9px rgba(232,181,71,0.04), 0 0 32px rgba(232,181,71,0.70); }
+  }
+  .step .lbl {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .step.done .lbl    { color: var(--muted); }
+  .step.current .lbl { color: var(--text); }
+  .step.current .lbl b { color: var(--gold-2); font-weight: 600; }
+  .step.pending .lbl { color: var(--dim); }
+
+  .connector {
+    flex: 1; height: 2px; min-width: 32px;
+    background: linear-gradient(90deg, var(--dim), transparent 50%, var(--dim));
+    opacity: 0.35; border-radius: 2px;
+  }
+  .connector.filled {
+    background: linear-gradient(90deg, var(--gold), var(--gold-2));
+    opacity: 0.55;
+  }
+  .connector.half {
+    background: linear-gradient(90deg, var(--gold) 0%, var(--gold-2) 45%, var(--dim) 45%, var(--dim) 100%);
+    opacity: 0.55;
+  }
+
+  /* wordmark DAG animation */
+  .dag-edge {
+    stroke: var(--gold); stroke-width: 1.5; fill: none;
+    stroke-dasharray: 20; stroke-dashoffset: 20;
+    animation: flow 2.6s ease-in-out infinite;
+  }
+  .dag-edge:nth-child(2) { animation-delay: 0.4s; }
+  .dag-edge:nth-child(3) { animation-delay: 0.8s; }
+  @keyframes flow {
+    0%   { stroke-dashoffset: 20; opacity: 0.2; }
+    50%  { stroke-dashoffset: 0;  opacity: 1;   }
+    100% { stroke-dashoffset: -20; opacity: 0.2; }
+  }
+  .dag-node { fill: var(--ink-0); stroke: var(--gold-2); stroke-width: 1.5; }
+
+  /* ---------- Page container ---------- */
+  .page {
+    max-width: 1120px; margin: 0 auto;
+    padding: 44px 28px 96px;
+  }
+  .hero {
+    margin: 0 0 56px;
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 48px; align-items: end;
+  }
+  .hero h1 {
+    font-family: "Instrument Serif", serif;
+    font-weight: 400; font-size: clamp(44px, 6vw, 76px);
+    line-height: 0.98; letter-spacing: -0.01em;
+    margin: 0 0 16px;
+  }
+  .hero h1 em { color: var(--gold); font-style: italic; }
+  .hero h1 .small {
+    display: block; font-size: 0.34em;
+    font-family: "JetBrains Mono", monospace;
+    letter-spacing: 0.24em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px;
+  }
+  .hero p {
+    color: var(--muted); font-size: 15.5px; max-width: 44ch;
+    margin: 0;
+  }
+  .hero aside {
+    display: flex; flex-direction: column; gap: 10px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted);
+    border-left: 1px solid var(--line); padding: 6px 0 6px 20px;
+  }
+  .hero aside span b { color: var(--gold-2); font-weight: 500; }
+
+  /* ---------- Stages ---------- */
+  .stage {
+    position: relative;
+    margin-bottom: 28px;
+    border-radius: 20px;
+    padding: 28px 32px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+    border: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: opacity 0.3s ease;
+  }
+  .stage.done    { opacity: 0.42; }
+  .stage.done:hover { opacity: 0.75; }
+  .stage.current {
+    background: linear-gradient(180deg, rgba(232,181,71,0.08), rgba(232,181,71,0.015) 40%, rgba(111,123,255,0.04));
+    border-color: rgba(232,181,71,0.35);
+    box-shadow:
+      0 0 0 1px rgba(232,181,71,0.08),
+      0 30px 80px -20px rgba(232,181,71,0.18),
+      inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  .stage.pending {
+    opacity: 0.28;
+    border-style: dashed;
+  }
+  .stage .tag-row {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  .stage h2 {
+    font-family: "Instrument Serif", serif;
+    font-weight: 400; font-style: italic;
+    font-size: 34px; margin: 0;
+    color: var(--text);
+  }
+  .stage.current h2 { color: var(--gold-2); }
+  .stage .step-no {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .stage.current .step-no { color: var(--gold); }
+
+  .summary {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px; color: var(--muted);
+    display: flex; gap: 16px; flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .summary b { color: var(--text); font-weight: 500; }
+  .check {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--mint);
+  }
+
+  /* Input stage (done) */
+  .readiness { display: flex; gap: 18px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: "JetBrains Mono", monospace; font-size: 11.5px;
+    letter-spacing: 0.08em;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(91,227,184,0.10);
+    border: 1px solid rgba(91,227,184,0.28);
+    color: var(--mint);
+  }
+  .chip.grey {
+    background: transparent;
+    border: 1px dashed var(--line);
+    color: var(--dim);
+  }
+
+  .problem-box {
+    font-family: "Instrument Serif", serif;
+    font-style: italic;
+    font-size: 20px;
+    line-height: 1.45;
+    color: var(--text);
+    padding: 18px 22px;
+    border-left: 2px solid var(--gold);
+    background: rgba(255,255,255,0.02);
+    border-radius: 0 14px 14px 0;
+    margin-bottom: 14px;
+  }
+
+  /* Plan stage */
+  .agents { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .agent-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 16px;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .agent-id {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px; color: var(--text);
+    min-width: 44px;
+  }
+  .agent-desc {
+    color: var(--muted); font-size: 13.5px; flex: 1;
+  }
+  .badge {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px; font-weight: 500;
+    padding: 4px 9px; border-radius: 6px;
+    letter-spacing: 0.08em; white-space: nowrap;
+  }
+  .badge.cot    { color: var(--cot);    background: rgba(110,168,255,0.12); border: 1px solid rgba(110,168,255,0.30); }
+  .badge.sc     { color: var(--sc);     background: rgba(178,139,255,0.12); border: 1px solid rgba(178,139,255,0.30); }
+  .badge.debate { color: var(--debate); background: rgba(255,180,83,0.14);  border: 1px solid rgba(255,180,83,0.32); }
+  .badge.reflex { color: var(--reflex); background: rgba(91,227,184,0.12);  border: 1px solid rgba(91,227,184,0.30); }
+  .badge.web    { color: var(--web);    background: rgba(255,122,156,0.12); border: 1px solid rgba(255,122,156,0.30); }
+
+  /* Execute stage: graph + agents */
+  .exec-grid {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+  .exec-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .exec-count {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px; color: var(--muted); letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .exec-count b { color: var(--gold-2); font-weight: 600; }
+  .exec-bar {
+    margin: 0 0 22px;
+    height: 6px; border-radius: 999px;
+    background: rgba(255,255,255,0.05);
+    overflow: hidden; position: relative;
+  }
+  .exec-bar::after {
+    content: ""; position: absolute; inset: 0;
+    width: 43%;
+    background: linear-gradient(90deg, var(--gold), var(--gold-2), var(--violet));
+    background-size: 200% 100%;
+    animation: shimmer 2.2s linear infinite;
+    border-radius: 999px;
+    box-shadow: 0 0 20px rgba(232,181,71,0.55);
+  }
+  @keyframes shimmer {
+    0% { background-position: 0% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  .graph {
+    height: 340px;
+    position: relative;
+    border-radius: 14px;
+    background:
+      radial-gradient(800px 400px at 50% 0%, rgba(111,123,255,0.08), transparent 70%),
+      rgba(7,8,26,0.55);
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .graph-dots {
+    position: absolute; inset: 0; opacity: 0.5;
+    background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.08) 1px, transparent 1.5px);
+    background-size: 20px 20px;
+  }
+  .graph svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .gnode {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(18,23,53,0.92);
+    border: 1.5px solid var(--line);
+    min-width: 110px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    text-align: center;
+    transition: all 0.2s ease;
+  }
+  .gnode .gtype {
+    display: block; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 3px;
+  }
+  .gnode .gid { color: var(--text); font-weight: 600; font-size: 12px; }
+  .gnode.done   { border-color: rgba(91,227,184,0.45); }
+  .gnode.done .gtype   { color: var(--reflex); opacity: 0.85; }
+  .gnode.running {
+    border-color: var(--gold-2);
+    box-shadow: 0 0 0 3px rgba(232,181,71,0.12), 0 0 26px rgba(232,181,71,0.35);
+    animation: nodepulse 1.6s ease-in-out infinite;
+  }
+  .gnode.running .gtype { color: var(--gold-2); }
+  .gnode.pending { opacity: 0.5; border-style: dashed; }
+  .gnode.pending .gtype { opacity: 0.7; }
+  @keyframes nodepulse {
+    0%,100% { box-shadow: 0 0 0 3px rgba(232,181,71,0.12), 0 0 22px rgba(232,181,71,0.35); }
+    50%     { box-shadow: 0 0 0 6px rgba(232,181,71,0.04), 0 0 34px rgba(232,181,71,0.55); }
+  }
+  .gdot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 999px;
+    margin-right: 5px; vertical-align: 1px;
+  }
+  .gdot.run  { background: var(--gold-2); animation: blink 1.2s ease-in-out infinite; }
+  .gdot.done { background: var(--mint); }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  .edge { stroke-width: 1.6; fill: none; }
+  .edge.done { stroke: rgba(91,227,184,0.55); }
+  .edge.run {
+    stroke: var(--gold-2);
+    stroke-dasharray: 6 5;
+    animation: dash 0.9s linear infinite;
+  }
+  .edge.pend { stroke: rgba(255,255,255,0.15); stroke-dasharray: 3 5; }
+  @keyframes dash { to { stroke-dashoffset: -22; } }
+
+  .legend {
+    position: absolute; right: 12px; bottom: 12px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px;
+    background: rgba(7,8,26,0.75);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+  }
+  .legend span { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+  .legend span::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+  .legend .l-cot    { color: var(--cot); }
+  .legend .l-sc     { color: var(--sc); }
+  .legend .l-debate { color: var(--debate); }
+  .legend .l-reflex { color: var(--reflex); }
+  .legend .l-web    { color: var(--web); }
+
+  /* agent output cards */
+  .out-list { display: flex; flex-direction: column; gap: 10px; }
+  .out {
+    padding: 14px 16px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.025);
+  }
+  .out.done    { border-color: rgba(91,227,184,0.30); background: rgba(91,227,184,0.04); }
+  .out.running { border-color: rgba(232,181,71,0.45); background: rgba(232,181,71,0.06); }
+  .out .head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 6px; gap: 10px;
+  }
+  .out .left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .out .id { font-family: "JetBrains Mono", monospace; color: var(--text); font-size: 13px; font-weight: 600; }
+  .out .meta {
+    font-family: "JetBrains Mono", monospace; font-size: 11px; color: var(--muted);
+    display: flex; gap: 14px;
+  }
+  .out .body {
+    font-size: 13px; color: var(--text); opacity: 0.82; margin-top: 6px;
+  }
+  .out .deps {
+    font-family: "JetBrains Mono", monospace; font-size: 10.5px;
+    color: var(--muted); margin-top: 8px; letter-spacing: 0.06em;
+  }
+  .spinner {
+    width: 14px; height: 14px; border-radius: 999px;
+    border: 2px solid rgba(232,181,71,0.35); border-top-color: var(--gold-2);
+    animation: spin 0.9s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .placeholder {
+    text-align: center; padding: 48px 24px;
+    color: var(--dim);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  .placeholder em {
+    display: block;
+    font-family: "Instrument Serif", serif; font-style: italic;
+    font-size: 28px; text-transform: none; letter-spacing: 0;
+    color: var(--muted);
+    margin-top: 10px;
+  }
+
+  /* footer note */
+  .note {
+    margin-top: 60px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px; color: var(--dim); letter-spacing: 0.12em;
+    text-transform: uppercase; text-align: center;
+  }
+
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; gap: 20px; }
+    .hero aside { border-left: none; border-top: 1px solid var(--line); padding: 16px 0 0; }
+    .agents { grid-template-columns: 1fr; }
+    .exec-grid { grid-template-columns: 1fr; }
+    .rail .step .lbl { display: none; }
+    .rail .connector { min-width: 14px; }
+  }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="mesh"></div>
+  <div class="grain"></div>
+
+  <!-- ============ Sticky top rail ============ -->
+  <header class="rail-wrap">
+    <div class="rail-inner">
+      <div class="wordmark">
+        <svg viewBox="0 0 40 40">
+          <circle class="dag-node" cx="8"  cy="10" r="4"/>
+          <circle class="dag-node" cx="32" cy="10" r="4"/>
+          <circle class="dag-node" cx="20" cy="30" r="4"/>
+          <path class="dag-edge" d="M8 10 Q 14 22 20 30"/>
+          <path class="dag-edge" d="M32 10 Q 26 22 20 30"/>
+          <path class="dag-edge" d="M8 10 Q 20 4 32 10"/>
+        </svg>
+        <div>
+          <div class="name">MAS<em>·</em>Orchestra</div>
+          <div class="tag">redesign mock</div>
+        </div>
+      </div>
+
+      <nav class="rail" aria-label="Pipeline progress">
+        <div class="step done">
+          <span class="dot"></span><span class="lbl">Input · ready</span>
+        </div>
+        <div class="connector filled"></div>
+        <div class="step done">
+          <span class="dot"></span><span class="lbl">Plan · 5 agents</span>
+        </div>
+        <div class="connector half"></div>
+        <div class="step current">
+          <span class="dot"></span><span class="lbl">Execute · <b>3 / 5 agents</b></span>
+        </div>
+        <div class="connector"></div>
+        <div class="step pending">
+          <span class="dot"></span><span class="lbl">Result</span>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ============ Page ============ -->
+  <main class="page">
+
+    <!-- Hero -->
+    <section class="hero">
+      <div>
+        <h1>
+          <span class="small">a multi-agent conductor</span>
+          Plans <em>arrive</em>,<br/>agents <em>play</em>,<br/>the answer <em>resolves</em>.
+        </h1>
+        <p>
+          A fine-tuned meta-agent composes a DAG of sub-agents for each problem;
+          they execute in parallel where possible, and their outputs stream
+          into this page live.
+        </p>
+      </div>
+      <aside>
+        <span>model · <b>mas-orchestra / browsecomp</b></span>
+        <span>sub-agents · <b>gpt-4.1-mini</b></span>
+        <span>elapsed · <b>00:12.4s</b></span>
+      </aside>
+    </section>
+
+    <!-- ============ Stage 1: Input (done) ============ -->
+    <section class="stage done" aria-label="Input">
+      <div class="tag-row">
+        <div class="step-no">01 · input</div>
+        <span class="check">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          accepted
+        </span>
+      </div>
+      <h2>What is the smallest positive integer n such that …</h2>
+      <div class="summary" style="margin-top:14px">
+        <span>mode · <b>custom</b></span>
+        <span>DoM · <b>high</b></span>
+        <span>model · <b>gpt-4.1-mini</b></span>
+        <span>chars · <b>128</b></span>
+      </div>
+      <div class="readiness">
+        <span class="chip">problem <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="chip">mode <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span class="chip">model <svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      </div>
+    </section>
+
+    <!-- ============ Stage 2: Plan (done) ============ -->
+    <section class="stage done" aria-label="Plan">
+      <div class="tag-row">
+        <div class="step-no">02 · plan</div>
+        <span class="check">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          5 agents · 6 edges · 2.1s
+        </span>
+      </div>
+      <h2>A chain of thought, twice over, then a critic.</h2>
+      <div class="summary" style="margin:14px 0 18px">
+        <span>calling meta-agent <svg width="10" height="10" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5" stroke="#59e3a7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span>streaming reasoning <svg width="10" height="10" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5" stroke="#59e3a7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span>parsing XML <svg width="10" height="10" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5" stroke="#59e3a7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span>building DAG <svg width="10" height="10" viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5" stroke="#59e3a7" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      </div>
+      <div class="agents">
+        <div class="agent-row"><span class="agent-id">a1</span><span class="badge cot">CoTAgent</span><span class="agent-desc">First-pass chain-of-thought.</span></div>
+        <div class="agent-row"><span class="agent-id">a2</span><span class="badge sc">SCAgent</span><span class="agent-desc">Majority-vote over sampled paths.</span></div>
+        <div class="agent-row"><span class="agent-id">a3</span><span class="badge web">WebSearchAgent</span><span class="agent-desc">Retrieve supporting facts.</span></div>
+        <div class="agent-row"><span class="agent-id">a4</span><span class="badge debate">DebateAgent</span><span class="agent-desc">Reconcile a1 and a2.</span></div>
+        <div class="agent-row"><span class="agent-id">a5</span><span class="badge reflex">ReflexionAgent</span><span class="agent-desc">Critique and finalize.</span></div>
+      </div>
+    </section>
+
+    <!-- ============ Stage 3: Execute (current) ============ -->
+    <section class="stage current" aria-label="Execute">
+      <div class="tag-row">
+        <div class="step-no">03 · execute</div>
+        <div class="exec-count">live · <b>3 / 5 agents complete</b> · 00:12.4s</div>
+      </div>
+      <h2>Agents at work.</h2>
+      <div class="exec-bar" aria-hidden="true"></div>
+
+      <div class="exec-grid">
+        <!-- Graph -->
+        <div class="graph">
+          <div class="graph-dots"></div>
+          <svg viewBox="0 0 520 340" preserveAspectRatio="none">
+            <!-- edges -->
+            <path class="edge done" d="M120 70 C 120 130, 90 140, 90 180"/>
+            <path class="edge done" d="M260 70 C 260 130, 260 140, 260 180"/>
+            <path class="edge done" d="M400 70 C 400 130, 430 140, 430 180"/>
+            <path class="edge run"  d="M90 220 C 90 260, 240 260, 240 280"/>
+            <path class="edge run"  d="M260 220 C 260 250, 260 260, 260 280"/>
+            <path class="edge pend" d="M240 310 C 240 320, 260 320, 260 320"/>
+          </svg>
+          <div class="gnode done"    style="left: 23%; top: 20%;">
+            <span class="gtype">CoTAgent</span>
+            <span class="gid"><span class="gdot done"></span>a1</span>
+          </div>
+          <div class="gnode done"    style="left: 50%; top: 20%;">
+            <span class="gtype" style="color:var(--sc)">SCAgent</span>
+            <span class="gid"><span class="gdot done"></span>a2</span>
+          </div>
+          <div class="gnode done"    style="left: 77%; top: 20%;">
+            <span class="gtype" style="color:var(--web)">WebSearchAgent</span>
+            <span class="gid"><span class="gdot done"></span>a3</span>
+          </div>
+          <div class="gnode running" style="left: 50%; top: 64%;">
+            <span class="gtype">DebateAgent</span>
+            <span class="gid"><span class="gdot run"></span>a4</span>
+          </div>
+          <div class="gnode pending" style="left: 50%; top: 92%;">
+            <span class="gtype" style="color:var(--reflex)">ReflexionAgent</span>
+            <span class="gid">a5</span>
+          </div>
+
+          <div class="legend">
+            <span class="l-cot">CoT</span>
+            <span class="l-sc">SC</span>
+            <span class="l-debate">Debate</span>
+            <span class="l-reflex">Reflexion</span>
+            <span class="l-web">Web</span>
+          </div>
+        </div>
+
+        <!-- Outputs -->
+        <div class="out-list">
+          <div class="out done">
+            <div class="head">
+              <div class="left">
+                <span class="id">a1</span>
+                <span class="badge cot">CoTAgent</span>
+              </div>
+              <div class="meta"><span>3.1s</span><span>812 tok</span></div>
+            </div>
+            <div class="body">Laid out a 4-step derivation; candidate answer is <b>n = 253</b>.</div>
+            <div class="deps">← no deps</div>
+          </div>
+
+          <div class="out done">
+            <div class="head">
+              <div class="left">
+                <span class="id">a2</span>
+                <span class="badge sc">SCAgent</span>
+              </div>
+              <div class="meta"><span>5.4s</span><span>2,104 tok</span></div>
+            </div>
+            <div class="body">Sampled 5 reasoning paths; majority vote → <b>n = 253</b> (4 / 5).</div>
+            <div class="deps">← no deps</div>
+          </div>
+
+          <div class="out done">
+            <div class="head">
+              <div class="left">
+                <span class="id">a3</span>
+                <span class="badge web">WebSearchAgent</span>
+              </div>
+              <div class="meta"><span>2.8s</span><span>614 tok</span></div>
+            </div>
+            <div class="body">Retrieved 3 sources; no contradictions to a1/a2.</div>
+            <div class="deps">← no deps</div>
+          </div>
+
+          <div class="out running">
+            <div class="head">
+              <div class="left">
+                <span class="id">a4</span>
+                <span class="badge debate">DebateAgent</span>
+                <span class="spinner" aria-hidden="true"></span>
+              </div>
+              <div class="meta"><span>00:03.1s</span></div>
+            </div>
+            <div class="body">Round 2 of 3: weighing a1's derivation against a2's vote …</div>
+            <div class="deps">← depends on: a1, a2, a3</div>
+          </div>
+
+          <div class="out">
+            <div class="head">
+              <div class="left">
+                <span class="id" style="color: var(--dim)">a5</span>
+                <span class="badge reflex" style="opacity:0.6">ReflexionAgent</span>
+              </div>
+              <div class="meta" style="color: var(--dim)">pending</div>
+            </div>
+            <div class="deps" style="color:var(--dim)">← depends on: a4</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Stage 4: Result (pending) ============ -->
+    <section class="stage pending" aria-label="Result">
+      <div class="tag-row">
+        <div class="step-no">04 · result</div>
+        <div class="exec-count" style="color: var(--dim)">awaiting final answer</div>
+      </div>
+      <div class="placeholder">
+        not yet
+        <em>the final answer will land here</em>
+      </div>
+    </section>
+
+    <div class="note">all of this is a static mock · no backend wired</div>
+  </main>
+</body>
+</html>
