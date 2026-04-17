@@ -67,6 +67,6 @@ Please output the complete revised plan XML."""
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,
-        max_tokens=16384,
+        max_tokens=32768,
     )
     return resp.choices[0].message.content or ""
