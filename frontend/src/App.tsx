@@ -2,152 +2,431 @@ import { useState, useRef, useEffect } from "react";
 import { useOrchestration } from "./hooks/useOrchestration";
 import { GraphViewer } from "./components/GraphViewer";
 import { DatasetPicker } from "./components/DatasetPicker";
-import type { Dataset, DomLevel, Mode, Stage, SubagentModel, CustomAgentConfig } from "./types";
+import type { Dataset, DomLevel, Mode, SubagentModel, CustomAgentConfig, SubagentConfig, Agent, AgentType, AgentState, Plan, ChatMessage } from "./types";
 import { AGENT_POOL, DATASETS, DOM_OPTIONS, MODES, SUBAGENT_MODELS } from "./types";
 
-const STAGES: { key: Stage; label: string }[] = [
-  { key: "input", label: "Input" },
-  { key: "plan", label: "Plan" },
-  { key: "execute", label: "Execute" },
-  { key: "result", label: "Result" },
-];
+/* ────────────────────────────────────────────────────────────────
+   Icons (inline SVGs, keep bundle tiny)
+   ──────────────────────────────────────────────────────────────── */
+const I = {
+  Menu: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>,
+  Panel: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>,
+  Chev: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>,
+  Check: (p: { className?: string }) => <svg {...p} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-8 8a1 1 0 01-1.4 0l-4-4a1 1 0 111.4-1.4L8 12.58l7.3-7.3a1 1 0 011.4 0z" clipRule="evenodd"/></svg>,
+  X: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>,
+  Send: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>,
+  Arrow: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M5 12l14 0M13 6l6 6-6 6"/></svg>,
+  Copy: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>,
+  Refresh: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>,
+  Undo: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4"/></svg>,
+  Redo: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4"/></svg>,
+  Expand: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>,
+  GitHub: (p: { className?: string }) => <svg {...p} fill="currentColor" viewBox="0 0 24 24"><path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd"/></svg>,
+  Paper: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>,
+  Globe: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>,
+  Sparkle: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 2l2 7 7 2-7 2-2 7-2-7-7-2 7-2z"/></svg>,
+};
 
-function ProgressRail({
-  current,
-  agentStates,
-  plan,
-  isLoading,
-  onSelect,
-  canSelect,
+/* ────────────────────────────────────────────────────────────────
+   Type colors (shared)
+   ──────────────────────────────────────────────────────────────── */
+const TYPE_COLOR: Record<AgentType, string> = {
+  CoTAgent: "#3b82f6",
+  SCAgent: "#7c3aed",
+  DebateAgent: "#f59e0b",
+  ReflexionAgent: "#10b981",
+  WebSearchAgent: "#ef4444",
+  CustomAgent: "#ec4899",
+};
+
+/* ────────────────────────────────────────────────────────────────
+   TopBar — integrated brand + affiliations + link icons + toggles
+   ──────────────────────────────────────────────────────────────── */
+function TopBar({
+  onToggleLeft,
+  onToggleRight,
+  onReset,
+  showGraphToggle,
 }: {
-  current: Stage;
-  agentStates: Record<string, { status: string }>;
-  plan: { graph: { agents: { id: string }[] } } | null;
-  isLoading: boolean;
-  onSelect: (s: Stage) => void;
-  canSelect: (s: Stage) => boolean;
+  onToggleLeft: () => void;
+  onToggleRight: () => void;
+  onReset: () => void;
+  showGraphToggle: boolean;
 }) {
-  const stageIdx = STAGES.findIndex(s => s.key === current);
+  return (
+    <header className="h-14 border-b bg-white flex items-center px-3 gap-3 flex-none">
+      <button onClick={onToggleLeft} className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500" title="Toggle sidebar">
+        <I.Menu className="w-4 h-4" />
+      </button>
+      <button
+        onClick={onReset}
+        title="Home"
+        className="flex items-center gap-2.5 px-1.5 py-1 -mx-1.5 rounded-md hover:bg-gray-100 transition-colors"
+      >
+        <div className="w-7 h-7 rounded-md bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white text-[11px] font-bold flex-none">MO</div>
+        <div className="leading-tight text-left">
+          <div className="text-sm font-semibold text-gray-900">MAS-Orchestra</div>
+          <div className="flex items-center gap-1.5 text-[10px] leading-none mt-1">
+            <span style={{ color: "#00A1E0" }}>Salesforce AI</span>
+            <span className="text-gray-300">·</span>
+            <span style={{ color: "#A31F34" }}>MIT</span>
+            <span className="text-gray-300">·</span>
+            <span style={{ color: "#C5050C" }}>UW Madison</span>
+          </div>
+        </div>
+      </button>
 
-  const statusHint = (s: Stage): string | null => {
-    if (s === "plan" && current === "plan" && isLoading) return "generating\u2026";
-    if (s === "execute" && (current === "execute" || current === "result") && plan) {
-      const total = plan.graph.agents.length;
-      const done = Object.values(agentStates).filter(a => a.status === "completed" || a.status === "failed").length;
-      if (current === "execute") return `${done} / ${total} agents`;
-      return `${total} agents`;
-    }
-    return null;
+      <div className="ml-auto flex items-center gap-1.5">
+        <a href="https://github.com/SalesforceAIResearch/MAS-Orchestra" target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 px-2.5 py-1.5 rounded-md hover:bg-gray-100">
+          <I.GitHub className="w-3.5 h-3.5" /> GitHub
+        </a>
+        <a href="https://arxiv.org/abs/2601.14652" target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 px-2.5 py-1.5 rounded-md hover:bg-gray-100">
+          <I.Paper className="w-3.5 h-3.5" /> Paper
+        </a>
+        <a href="https://vincent950129.github.io/mas-design/mas_r1/" target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 px-2.5 py-1.5 rounded-md hover:bg-gray-100">
+          <I.Globe className="w-3.5 h-3.5" /> Project
+        </a>
+        {showGraphToggle && (
+          <button onClick={onToggleRight} className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500" title="Toggle graph panel">
+            <I.Panel className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+    </header>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   LeftSidebar — settings
+   ──────────────────────────────────────────────────────────────── */
+function LeftSidebar({
+  mode, onModeChange,
+  dom, onDomChange,
+  subagentModel, onSubagentChange,
+  disabled,
+}: {
+  mode: Mode; onModeChange: (m: Mode) => void;
+  dom: DomLevel; onDomChange: (d: DomLevel) => void;
+  subagentModel: SubagentModel; onSubagentChange: (m: SubagentModel) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="h-full w-60 p-4 space-y-5 overflow-y-auto">
+      <div>
+        <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Mode</div>
+        <div className="space-y-1">
+          {MODES.map(m => (
+            <label key={m.value} className={`flex items-center gap-2 text-sm ${disabled ? "opacity-50" : "cursor-pointer"}`}>
+              <input
+                type="radio"
+                name="mode"
+                checked={mode === m.value}
+                onChange={() => !disabled && onModeChange(m.value)}
+                disabled={disabled}
+                className="accent-blue-600"
+              />
+              <span className="text-gray-700">{m.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {mode === "custom" && (
+        <div>
+          <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Degree of MAS</div>
+          <div className="inline-flex flex-wrap gap-1 p-0.5 rounded-md border bg-white">
+            {DOM_OPTIONS.map(d => (
+              <button
+                key={d.value}
+                onClick={() => !disabled && onDomChange(d.value)}
+                disabled={disabled}
+                className={`px-2 py-1 text-[11px] rounded transition-colors ${
+                  dom === d.value ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"
+                }`}
+                title={d.hint || undefined}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Sub-agent model</div>
+        <select
+          value={subagentModel}
+          onChange={e => onSubagentChange(e.target.value as SubagentModel)}
+          className="w-full text-sm border rounded-md px-2 py-1.5 bg-white focus:ring-1 focus:ring-blue-400 focus:outline-none"
+        >
+          {SUBAGENT_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+
+      <details className="group">
+        <summary className="flex items-center justify-between cursor-pointer list-none text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2 select-none">
+          <span>Agent types</span>
+          <I.Chev className="w-3 h-3 text-gray-400 transition-transform group-open:rotate-90" />
+        </summary>
+        <div className="space-y-1.5 mt-1">
+          {AGENT_POOL.map(a => (
+            <div key={a.type} className="text-[11px]">
+              <div className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full flex-none" style={{ background: TYPE_COLOR[a.type as AgentType] || "#9ca3af" }} />
+                <span className="font-medium text-gray-700">{a.type.replace("Agent", "")}</span>
+              </div>
+              <div className="text-[10.5px] text-gray-400 leading-snug ml-3.5 mt-0.5">{a.description}</div>
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   ProgressRail — inline at top of main column
+   ──────────────────────────────────────────────────────────────── */
+function ProgressRail({
+  stage, planAgents, agentStates, isLoading, isDirect,
+  canExecute, onExecute, onRerun,
+  planHistory, activePlan, onSwitchPlan,
+}: {
+  stage: "plan" | "execute" | "result";
+  planAgents: number;
+  agentStates: Record<string, AgentState>;
+  isLoading: boolean;
+  isDirect: boolean;
+  canExecute: boolean;
+  onExecute: () => void;
+  onRerun: () => void;
+  planHistory: Plan[];
+  activePlan: Plan | null;
+  onSwitchPlan: (p: Plan) => void;
+}) {
+  const done = Object.values(agentStates).filter(a => a.status === "completed" || a.status === "failed").length;
+  const running = Object.values(agentStates).some(a => a.status === "running");
+
+  let label = "";
+  if (isDirect) label = "Direct solution";
+  else if (stage === "plan") label = isLoading ? "Designing plan…" : `Plan · ${planAgents} agents`;
+  else if (stage === "execute") label = `Executing · ${done} / ${planAgents} agents`;
+  else label = `Done · ${planAgents} agents`;
+
+  const dot = (s: "input" | "plan" | "execute" | "result") => {
+    const order = ["input", "plan", "execute", "result"];
+    const curI = order.indexOf(stage);
+    const sI = order.indexOf(s);
+    if (sI < curI) return "bg-emerald-500";
+    if (sI === curI) return running || isLoading ? "bg-amber-400 animate-pulse" : "bg-blue-500";
+    return "bg-gray-300";
   };
 
   return (
-    <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b">
-      <div className="max-w-5xl mx-auto px-6">
-        <div className="flex items-center h-12">
-          {STAGES.map((s, i) => {
-            const isDone = i < stageIdx;
-            const isCurrent = i === stageIdx;
-            const isPending = i > stageIdx;
-            const clickable = canSelect(s.key);
-            const hint = statusHint(s.key);
+    <div className="h-11 border-b bg-white/90 backdrop-blur flex items-center px-5 text-xs text-gray-500 gap-3 flex-none">
+      <span className="text-gray-700 font-medium truncate flex-none max-w-[40%]">{label}</span>
 
+      <div className="hidden md:flex items-center gap-1 text-[11px] flex-none">
+        <span className={`w-1.5 h-1.5 rounded-full ${dot("input")}`}></span><span>input</span>
+        <span className="text-gray-300 mx-0.5">→</span>
+        <span className={`w-1.5 h-1.5 rounded-full ${dot("plan")}`}></span><span>plan</span>
+        <span className="text-gray-300 mx-0.5">→</span>
+        <span className={`w-1.5 h-1.5 rounded-full ${dot("execute")}`}></span><span>execute</span>
+        <span className="text-gray-300 mx-0.5">→</span>
+        <span className={`w-1.5 h-1.5 rounded-full ${dot("result")}`}></span><span>result</span>
+      </div>
+
+      {planHistory.length > 1 && (
+        <div className="hidden md:flex items-center gap-1 ml-2 pl-3 border-l border-gray-200 flex-1 min-w-0 overflow-x-auto no-scrollbar">
+          <span className="text-[10.5px] text-gray-400 uppercase tracking-wide mr-0.5 flex-none">plan</span>
+          {planHistory.map((p, i) => {
+            const isActive = p === activePlan || p.xml === activePlan?.xml;
             return (
-              <div key={s.key} className={`flex items-center ${i > 0 ? "flex-1" : ""}`}>
-                {i > 0 && (
-                  <div className={`flex-1 h-px transition-colors duration-300 ${isDone ? "bg-blue-400" : "bg-gray-200"}`} />
-                )}
-                <button
-                  onClick={() => clickable && onSelect(s.key)}
-                  disabled={!clickable}
-                  className={`flex items-center gap-2 group transition-all px-2 ${clickable ? "cursor-pointer" : "cursor-default"}`}
-                >
-                  <div className={`w-2.5 h-2.5 rounded-full border-2 transition-all duration-300 flex-shrink-0
-                    ${isDone ? "bg-blue-500 border-blue-500" : ""}
-                    ${isCurrent ? "border-blue-500 bg-blue-500 ring-4 ring-blue-100 animate-pulse-subtle" : ""}
-                    ${isPending ? "border-gray-300 bg-white" : ""}
-                  `} />
-                  <span className={`text-sm font-medium whitespace-nowrap transition-colors
-                    ${isCurrent ? "text-gray-900" : isDone ? "text-gray-500" : "text-gray-300"}
-                    ${clickable && !isCurrent ? "group-hover:text-gray-700" : ""}
-                  `}>
-                    {s.label}
-                    {hint && <span className="text-xs font-normal text-gray-400 ml-1">&middot; {hint}</span>}
-                  </span>
-                </button>
-              </div>
+              <button
+                key={i}
+                onClick={() => !isActive && onSwitchPlan(p)}
+                disabled={stage === "execute" || isLoading}
+                className={`px-1.5 py-0.5 text-[11px] font-mono rounded transition-colors flex-none ${
+                  isActive
+                    ? "bg-gray-900 text-white"
+                    : "text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                }`}
+                title={isActive ? "Active — this plan will run" : `Switch to v${i + 1}`}
+              >
+                v{i + 1}
+              </button>
             );
           })}
+        </div>
+      )}
+
+      <div className="ml-auto flex items-center gap-1.5 flex-none">
+        {!isDirect && stage === "execute" ? (
+          <span className="flex items-center gap-1.5 text-[11px] text-amber-700 px-2 py-1 bg-amber-50 border border-amber-200 rounded-md">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            Running…
+          </span>
+        ) : !isDirect && (
+          <button
+            onClick={stage === "result" ? onRerun : onExecute}
+            disabled={!canExecute && stage !== "result"}
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-gray-300 flex items-center gap-1 shadow-sm"
+          >
+            Run <I.Arrow className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   EmptyState — hero composer + starter prompts, or dataset picker
+   ──────────────────────────────────────────────────────────────── */
+const STARTERS = [
+  "Find all positive integer triples (a,b,c) with a ≤ b ≤ c and abc = 6(a+b+c).",
+  "Prove that for all positive reals x, y, z with xyz = 1: x² + y² + z² ≥ x + y + z.",
+  "How many subsets of {1, 2, …, 12} have sum divisible by 5?",
+];
+
+function EmptyState({
+  mode, dom, onDomChange,
+  problem, onProblemChange,
+  expected, onExpectedChange,
+  onSubmitCustom, onSubmitDataset,
+  isLoading,
+}: {
+  mode: Mode; dom: DomLevel; onDomChange: (d: DomLevel) => void;
+  problem: string; onProblemChange: (s: string) => void;
+  expected: string; onExpectedChange: (s: string) => void;
+  onSubmitCustom: () => void;
+  onSubmitDataset: (q: string, a: string) => void;
+  isLoading: boolean;
+}) {
+  const canSubmit = problem.trim().length > 0 && !isLoading;
+  const isDataset = mode !== "custom";
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <div className="min-h-full flex flex-col items-center justify-center px-5 py-10">
+        <div className="max-w-2xl w-full text-center mb-6">
+          <h1 className="text-3xl font-semibold text-gray-900 tracking-tight mb-2">
+            {isDataset ? "Pick a question to solve" : "What should Orchestra solve?"}
+          </h1>
+          <p className="text-sm text-gray-500">
+            {isDataset
+              ? "Orchestra designs a multi-agent plan for the selected problem, then lets you refine it in chat."
+              : "Describe a problem. Orchestra designs a multi-agent plan, executes it, and lets you refine in chat."}
+          </p>
+        </div>
+
+        {!isDataset ? (
+          <div className="max-w-2xl w-full">
+            <div className="rounded-2xl border border-gray-300 bg-white shadow-sm focus-within:border-gray-400 transition-colors relative">
+              <textarea
+                rows={3}
+                value={problem}
+                onChange={e => onProblemChange(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) {
+                    e.preventDefault();
+                    onSubmitCustom();
+                  }
+                }}
+                placeholder="Enter a question…"
+                className="w-full resize-none outline-none text-sm leading-relaxed p-4 placeholder:text-gray-400 rounded-t-2xl"
+              />
+              <div className="flex items-center justify-between gap-2 px-3 py-2 border-t bg-gray-50/50 rounded-b-2xl">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="inline-flex gap-0.5 p-0.5 rounded-md border bg-white flex-none">
+                    {DOM_OPTIONS.map(d => (
+                      <button
+                        key={d.value}
+                        onClick={() => onDomChange(d.value)}
+                        className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+                          dom === d.value ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"
+                        }`}
+                        title={d.hint || undefined}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    value={expected}
+                    onChange={e => onExpectedChange(e.target.value)}
+                    placeholder="expected answer (optional)"
+                    className="flex-1 min-w-0 text-[11px] text-gray-500 bg-transparent outline-none placeholder:text-gray-400"
+                  />
+                </div>
+                <button
+                  onClick={onSubmitCustom}
+                  disabled={!canSubmit}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:bg-gray-300 flex items-center gap-1 flex-none"
+                >
+                  {isLoading ? "Designing…" : "Design plan"}
+                  <I.Arrow className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <div className="text-[11px] text-gray-400 uppercase tracking-wide mb-2 text-center">or try</div>
+              <div className="flex flex-wrap gap-2 justify-center">
+                {STARTERS.map((s, i) => (
+                  <button
+                    key={i}
+                    onClick={() => onProblemChange(s)}
+                    className="text-xs px-3 py-1.5 rounded-full border bg-white hover:border-blue-300 hover:bg-blue-50/40 transition-colors text-gray-700 max-w-md truncate"
+                    title={s}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="max-w-2xl w-full">
+            <DatasetPicker
+              dataset={mode as Dataset}
+              onSelect={(q, a) => {
+                onProblemChange(q);
+                onExpectedChange(a);
+                onSubmitDataset(q, a);
+              }}
+            />
+            {isLoading && (
+              <div className="mt-3 text-center text-xs text-gray-500 flex items-center justify-center gap-2">
+                <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                Designing plan for selected question…
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-10 text-[11px] text-gray-400 text-center">
+          Multi-agent orchestration · based on the{" "}
+          <a
+            href="https://arxiv.org/abs/2601.14652"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-gray-300 hover:decoration-gray-500 hover:text-gray-600 transition-colors"
+          >
+            MAS-Orchestra paper
+          </a>
         </div>
       </div>
     </div>
   );
 }
 
-function Badge({ type }: { type: string }) {
-  const colors: Record<string, string> = {
-    CoTAgent: "bg-blue-100 text-blue-700",
-    SCAgent: "bg-purple-100 text-purple-700",
-    DebateAgent: "bg-amber-100 text-amber-700",
-    ReflexionAgent: "bg-emerald-100 text-emerald-700",
-    WebSearchAgent: "bg-rose-100 text-rose-700",
-    CustomAgent: "bg-pink-100 text-pink-700",
-  };
-  return <span className={`px-2 py-0.5 text-xs font-medium rounded ${colors[type] || "bg-gray-100"}`}>{type}</span>;
-}
-
-const GitHubIcon = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-    <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
-  </svg>
-);
-
-const PaperIcon = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-    <path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/>
-  </svg>
-);
-
-const GlobeIcon = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-    <circle cx="12" cy="12" r="10" />
-    <path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20" />
-  </svg>
-);
-
-function StageWrapper({
-  stage,
-  current,
-  stageRef,
-  onActivate,
-  children,
-}: {
-  stage: Stage;
-  current: Stage;
-  stageRef: React.RefObject<HTMLDivElement | null>;
-  onActivate?: () => void;
-  children: React.ReactNode;
-}) {
-  const stageIdx = STAGES.findIndex(s => s.key === stage);
-  const currentIdx = STAGES.findIndex(s => s.key === current);
-  const isNotCurrent = stageIdx !== currentIdx;
-  const isDone = stageIdx < currentIdx;
-  const isCurrent = stageIdx === currentIdx;
-  const isPending = stageIdx > currentIdx;
-  const clickable = isNotCurrent && !!onActivate;
-
-  return (
-    <div
-      ref={stageRef}
-      onClick={clickable ? onActivate : undefined}
-      className={`transition-all duration-500 scroll-mt-16 ${
-        isCurrent ? "opacity-100" : isDone ? "opacity-50 saturate-50 cursor-pointer hover:opacity-70" : isPending ? "opacity-30 cursor-pointer hover:opacity-50" : ""
-      }`}
-    >
-      {children}
-    </div>
-  );
-}
-
+/* ────────────────────────────────────────────────────────────────
+   Tool-call-style agent card (Claude-Code-style, light)
+   ──────────────────────────────────────────────────────────────── */
 const STRATEGIES: { value: CustomAgentConfig["strategy"]; label: string; hint: string }[] = [
   { value: "single", label: "Single", hint: "One LLM call" },
   { value: "multi_sample", label: "Multi-Sample", hint: "N paths + vote" },
@@ -155,688 +434,974 @@ const STRATEGIES: { value: CustomAgentConfig["strategy"]; label: string; hint: s
   { value: "pipeline", label: "Pipeline", hint: "Sequential steps" },
 ];
 
-function CustomAgentCard({
-  config,
-  onUpdate,
+function StatusChip({ state }: { state: AgentState | undefined }) {
+  const status = state?.status ?? "pending";
+  if (status === "completed") return (
+    <span className="flex items-center gap-1 text-[11px] text-emerald-700 font-medium">
+      <I.Check className="w-3 h-3" /> done
+    </span>
+  );
+  if (status === "running") return (
+    <span className="flex items-center gap-1 text-[11px] text-amber-700 font-medium">
+      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" /> running
+    </span>
+  );
+  if (status === "failed") return (
+    <span className="flex items-center gap-1 text-[11px] text-red-700 font-medium">
+      <I.X className="w-3 h-3" /> failed
+    </span>
+  );
+  return <span className="text-[11px] text-gray-400">queued</span>;
+}
+
+function AgentToolCard({
+  agent,
+  state,
+  subagentConfig,
+  customConfig,
+  onUpdateSub,
+  onUpdateCustom,
+  locked,
 }: {
-  config: CustomAgentConfig;
-  onUpdate: (name: string, updates: Partial<CustomAgentConfig>) => void;
+  agent: Agent;
+  state: AgentState | undefined;
+  subagentConfig?: SubagentConfig;
+  customConfig?: CustomAgentConfig;
+  onUpdateSub: (id: string, u: Partial<SubagentConfig>) => void;
+  onUpdateCustom: (name: string, u: Partial<CustomAgentConfig>) => void;
+  locked: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [editPrompt, setEditPrompt] = useState(config.system_prompt);
+  const [open, setOpen] = useState(false);
+  const status = state?.status ?? "pending";
+  const color = TYPE_COLOR[agent.type];
+
+  // auto-open running
+  useEffect(() => {
+    if (status === "running") setOpen(true);
+  }, [status]);
+
+  const tone =
+    status === "running" ? "border-amber-300 shadow-sm shadow-amber-100" :
+    status === "completed" ? "border-gray-200 hover:border-gray-300" :
+    status === "failed" ? "border-red-300" :
+    "border-gray-200 hover:border-gray-300";
+
+  const headerTint =
+    status === "running" ? "bg-amber-50/40" :
+    status === "failed" ? "bg-red-50/40" :
+    "";
 
   return (
-    <div className="bg-white overflow-hidden">
+    <div className={`bg-white border rounded-lg overflow-hidden transition-colors ${tone}`}>
       <button
-        onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 transition-colors"
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center gap-2.5 px-3 py-2 text-left select-none ${headerTint}`}
       >
-        <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-pink-100 text-pink-700">Custom</span>
-        <span className="text-sm font-medium text-gray-800">{config.name}</span>
-        <span className="text-xs text-gray-400 ml-auto flex items-center gap-1">
-          {config.enable_web_search && <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>}
-          {config.enable_think_tool && <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>}
-          {config.strategy}
-        </span>
-        <svg className={`w-3.5 h-3.5 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" /></svg>
+        <I.Chev className={`w-3 h-3 text-gray-400 transition-transform ${open ? "rotate-90" : ""}`} />
+        <span className="font-mono text-[11px] text-gray-500">{agent.id}</span>
+        <span className="text-xs font-medium" style={{ color }}>{agent.type}</span>
+        <span className="text-xs text-gray-500 truncate flex-1">{agent.description}</span>
+        <StatusChip state={state} />
       </button>
-      {expanded && (
-        <div className="px-3 pb-3 space-y-3 border-t">
-          {/* Strategy toggle */}
-          <div className="pt-2">
-            <label className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Strategy</label>
-            <div className="flex gap-1 mt-1">
-              {STRATEGIES.map(s => (
-                <button
-                  key={s.value}
-                  onClick={() => onUpdate(config.name, { strategy: s.value })}
-                  className={`px-2 py-1 text-xs rounded transition-colors ${
-                    config.strategy === s.value
-                      ? "bg-pink-600 text-white"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
-                  title={s.hint}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {/* System prompt */}
-          <div>
-            <label className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">System Prompt</label>
-            <textarea
-              value={editPrompt}
-              onChange={e => setEditPrompt(e.target.value)}
-              onBlur={() => { if (editPrompt !== config.system_prompt) onUpdate(config.name, { system_prompt: editPrompt }); }}
-              className="w-full mt-1 px-2 py-1.5 text-xs border rounded-md resize-none focus:ring-1 focus:ring-pink-400 focus:outline-none"
-              rows={3}
-            />
-          </div>
-          {/* Strategy-specific fields */}
-          {config.strategy === "multi_sample" && (
+
+      {open && (
+        <div className="border-t bg-gray-50/40 px-3 py-3 space-y-3">
+          {/* Output / Error */}
+          {state?.output && (
             <div>
-              <label className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Samples</label>
-              <input
-                type="number"
-                value={config.num_samples ?? 3}
-                onChange={e => onUpdate(config.name, { num_samples: parseInt(e.target.value) || 3 })}
-                className="w-16 mt-1 px-2 py-1 text-xs border rounded-md focus:ring-1 focus:ring-pink-400 focus:outline-none"
-                min={2}
-                max={10}
-              />
+              <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-1">Output</div>
+              <pre className="text-xs text-gray-800 bg-white border rounded-md p-2.5 max-h-[240px] overflow-y-auto whitespace-pre-wrap break-words leading-relaxed">{state.output}</pre>
             </div>
           )}
-          {config.strategy === "critique" && (
-            <div className="space-y-2">
-              <div>
-                <label className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Rounds</label>
-                <input
-                  type="number"
-                  value={config.num_rounds ?? 2}
-                  onChange={e => onUpdate(config.name, { num_rounds: parseInt(e.target.value) || 2 })}
-                  className="w-16 mt-1 ml-2 px-2 py-1 text-xs border rounded-md focus:ring-1 focus:ring-pink-400 focus:outline-none"
-                  min={1}
-                  max={5}
-                />
+          {state?.error && (
+            <div>
+              <div className="text-[11px] font-medium text-red-600 uppercase tracking-wide mb-1">Error</div>
+              <pre className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-md p-2.5 whitespace-pre-wrap break-words">{state.error}</pre>
+            </div>
+          )}
+
+          {/* Input / depends */}
+          {(agent.input || agent.depends_on.length > 0) && (
+            <div className="grid grid-cols-1 gap-2">
+              {agent.input && (
+                <div>
+                  <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-1">Input</div>
+                  <pre className="text-xs text-gray-700 bg-white border rounded-md p-2 whitespace-pre-wrap break-words">{agent.input}</pre>
+                </div>
+              )}
+              {agent.depends_on.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-1">Depends on</div>
+                  <div className="flex flex-wrap gap-1">
+                    {agent.depends_on.map(d => (
+                      <span key={d} className="font-mono text-[11px] px-1.5 py-0.5 bg-white border rounded text-gray-700">{d}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Config editor — custom agent */}
+          {agent.type === "CustomAgent" && customConfig && (
+            <fieldset disabled={locked} className={`border-t pt-3 space-y-2 ${locked ? "opacity-60" : ""}`}>
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-medium text-pink-600 uppercase tracking-wide">Custom config</div>
+                {locked && <span className="text-[10.5px] text-gray-400">Locked during execute</span>}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {STRATEGIES.map(s => (
+                  <button
+                    key={s.value}
+                    onClick={() => onUpdateCustom(customConfig.name, { strategy: s.value })}
+                    className={`px-2 py-1 text-[11px] rounded transition-colors ${
+                      customConfig.strategy === s.value ? "bg-pink-600 text-white" : "bg-white border text-gray-600 hover:bg-gray-50"
+                    } disabled:cursor-not-allowed`}
+                    title={s.hint}
+                  >
+                    {s.label}
+                  </button>
+                ))}
               </div>
               <div>
-                <label className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Critic Prompt</label>
+                <label className="text-[10.5px] font-medium text-gray-500 uppercase tracking-wide">System prompt</label>
                 <textarea
-                  value={config.critic_prompt ?? ""}
-                  onChange={e => onUpdate(config.name, { critic_prompt: e.target.value })}
-                  className="w-full mt-1 px-2 py-1.5 text-xs border rounded-md resize-none focus:ring-1 focus:ring-pink-400 focus:outline-none"
-                  rows={2}
-                  placeholder="Instructions for the critic..."
+                  defaultValue={customConfig.system_prompt}
+                  onBlur={e => { if (e.target.value !== customConfig.system_prompt) onUpdateCustom(customConfig.name, { system_prompt: e.target.value }); }}
+                  className="w-full mt-1 px-2 py-1.5 text-xs border rounded-md resize-none focus:ring-1 focus:ring-pink-400 focus:outline-none bg-white disabled:bg-gray-100"
+                  rows={3}
                 />
               </div>
-            </div>
-          )}
-          {config.strategy === "pipeline" && (
-            <div>
-              <label className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Steps (one per line)</label>
-              <textarea
-                value={(config.steps ?? []).join("\n")}
-                onChange={e => onUpdate(config.name, { steps: e.target.value.split("\n").filter(Boolean) })}
-                className="w-full mt-1 px-2 py-1.5 text-xs border rounded-md resize-none focus:ring-1 focus:ring-pink-400 focus:outline-none font-mono"
-                rows={3}
-                placeholder={"Step 1: Analyze the problem\nStep 2: Generate solution\nStep 3: Verify"}
-              />
-            </div>
-          )}
-          {/* Tools */}
-          <div className="pt-1 border-t">
-            <label className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Tools</label>
-            <div className="flex items-center gap-4 mt-1">
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={config.enable_web_search ?? false}
-                  onChange={e => onUpdate(config.name, { enable_web_search: e.target.checked })}
-                  className="rounded border-gray-300 text-pink-600 focus:ring-pink-400"
+              {customConfig.strategy === "multi_sample" && (
+                <div className="flex items-center gap-2">
+                  <label className="text-[10.5px] font-medium text-gray-500 uppercase tracking-wide">Samples</label>
+                  <input
+                    type="number"
+                    value={customConfig.num_samples ?? 3}
+                    onChange={e => onUpdateCustom(customConfig.name, { num_samples: parseInt(e.target.value) || 3 })}
+                    className="w-16 px-2 py-1 text-xs border rounded-md bg-white disabled:bg-gray-100"
+                    min={2} max={10}
+                  />
+                </div>
+              )}
+              {customConfig.strategy === "critique" && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10.5px] font-medium text-gray-500 uppercase tracking-wide">Rounds</label>
+                    <input
+                      type="number"
+                      value={customConfig.num_rounds ?? 2}
+                      onChange={e => onUpdateCustom(customConfig.name, { num_rounds: parseInt(e.target.value) || 2 })}
+                      className="w-16 px-2 py-1 text-xs border rounded-md bg-white disabled:bg-gray-100"
+                      min={1} max={5}
+                    />
+                  </div>
+                  <textarea
+                    defaultValue={customConfig.critic_prompt ?? ""}
+                    onBlur={e => onUpdateCustom(customConfig.name, { critic_prompt: e.target.value })}
+                    className="w-full px-2 py-1.5 text-xs border rounded-md resize-none bg-white disabled:bg-gray-100"
+                    rows={2}
+                    placeholder="Critic instructions…"
+                  />
+                </>
+              )}
+              {customConfig.strategy === "pipeline" && (
+                <textarea
+                  defaultValue={(customConfig.steps ?? []).join("\n")}
+                  onBlur={e => onUpdateCustom(customConfig.name, { steps: e.target.value.split("\n").filter(Boolean) })}
+                  className="w-full px-2 py-1.5 text-xs font-mono border rounded-md resize-none bg-white disabled:bg-gray-100"
+                  rows={3}
+                  placeholder={"Step 1: Analyze\nStep 2: Generate\nStep 3: Verify"}
                 />
-                <span className="text-xs text-gray-600">Web Search</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={config.enable_think_tool ?? false}
-                  onChange={e => onUpdate(config.name, { enable_think_tool: e.target.checked })}
-                  className="rounded border-gray-300 text-pink-600 focus:ring-pink-400"
+              )}
+              <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
+                <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-700">
+                  <input type="checkbox" checked={customConfig.enable_web_search ?? false}
+                    onChange={e => onUpdateCustom(customConfig.name, { enable_web_search: e.target.checked })}
+                    className="rounded border-gray-300 text-pink-600 focus:ring-pink-400" />
+                  Web Search
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-700">
+                  <input type="checkbox" checked={customConfig.enable_code_interpreter ?? false}
+                    onChange={e => onUpdateCustom(customConfig.name, { enable_code_interpreter: e.target.checked })}
+                    className="rounded border-gray-300 text-pink-600 focus:ring-pink-400" />
+                  Code Interpreter
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-700">
+                  <input type="checkbox" checked={customConfig.enable_think_tool ?? false}
+                    onChange={e => onUpdateCustom(customConfig.name, { enable_think_tool: e.target.checked })}
+                    className="rounded border-gray-300 text-pink-600 focus:ring-pink-400" />
+                  Think Tool
+                </label>
+              </div>
+              {/* MCP */}
+              <div className="pt-1 border-t">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10.5px] font-medium text-gray-500 uppercase tracking-wide">MCP Servers</label>
+                  <button
+                    onClick={() => onUpdateCustom(customConfig.name, {
+                      mcp_servers: [...(customConfig.mcp_servers ?? []), { server_label: "", server_url: "", require_approval: "never" as const }],
+                    })}
+                    className="text-[11px] text-pink-600 hover:text-pink-700 font-medium disabled:cursor-not-allowed"
+                  >+ Add</button>
+                </div>
+                {(customConfig.mcp_servers ?? []).map((m, i) => (
+                  <div key={i} className="mt-1.5 p-2 border rounded-md bg-white space-y-1">
+                    <div className="flex gap-1.5">
+                      <input value={m.server_label}
+                        onChange={e => {
+                          const next = [...(customConfig.mcp_servers ?? [])];
+                          next[i] = { ...next[i], server_label: e.target.value };
+                          onUpdateCustom(customConfig.name, { mcp_servers: next });
+                        }}
+                        placeholder="label"
+                        className="flex-1 px-2 py-1 text-xs border rounded-md" />
+                      <button onClick={() => {
+                        const next = (customConfig.mcp_servers ?? []).filter((_, idx) => idx !== i);
+                        onUpdateCustom(customConfig.name, { mcp_servers: next.length ? next : null });
+                      }} className="px-1.5 py-1 text-xs text-gray-400 hover:text-red-500">×</button>
+                    </div>
+                    <input value={m.server_url}
+                      onChange={e => {
+                        const next = [...(customConfig.mcp_servers ?? [])];
+                        next[i] = { ...next[i], server_url: e.target.value };
+                        onUpdateCustom(customConfig.name, { mcp_servers: next });
+                      }}
+                      placeholder="https://mcp.example.com/"
+                      className="w-full px-2 py-1 text-xs font-mono border rounded-md" />
+                    <select value={m.require_approval ?? "never"}
+                      onChange={e => {
+                        const next = [...(customConfig.mcp_servers ?? [])];
+                        next[i] = { ...next[i], require_approval: e.target.value as "never" | "always" };
+                        onUpdateCustom(customConfig.name, { mcp_servers: next });
+                      }}
+                      className="px-1.5 py-0.5 text-[11px] border rounded-md">
+                      <option value="never">no approval</option>
+                      <option value="always">always approve</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </fieldset>
+          )}
+
+          {/* Config editor — built-in subagent */}
+          {agent.type !== "CustomAgent" && (
+            <fieldset disabled={locked} className={`border-t pt-3 space-y-2 ${locked ? "opacity-60" : ""}`}>
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Overrides</div>
+                {locked && <span className="text-[10.5px] text-gray-400">Locked during execute</span>}
+              </div>
+              <div>
+                <label className="text-[10.5px] font-medium text-gray-500 uppercase tracking-wide">System prompt</label>
+                <textarea
+                  defaultValue={subagentConfig?.system_prompt ?? ""}
+                  onBlur={e => { const v = e.target.value; if (v !== (subagentConfig?.system_prompt ?? "")) onUpdateSub(agent.id, { system_prompt: v || undefined }); }}
+                  placeholder={`Leave blank for default. Role: ${agent.description}`}
+                  className="w-full mt-1 px-2 py-1.5 text-xs border rounded-md resize-none bg-white"
+                  rows={2}
                 />
-                <span className="text-xs text-gray-600">Think Tool</span>
-              </label>
-            </div>
-          </div>
+              </div>
+              {agent.type === "SCAgent" && (
+                <div className="flex items-center gap-2">
+                  <label className="text-[10.5px] font-medium text-gray-500 uppercase tracking-wide">Samples</label>
+                  <input
+                    type="number"
+                    value={subagentConfig?.num_samples ?? 5}
+                    onChange={e => onUpdateSub(agent.id, { num_samples: parseInt(e.target.value) || 5 })}
+                    className="w-16 px-2 py-1 text-xs border rounded-md bg-white"
+                    min={2} max={10}
+                  />
+                </div>
+              )}
+              {agent.type === "ReflexionAgent" && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10.5px] font-medium text-gray-500 uppercase tracking-wide">Rounds</label>
+                    <input
+                      type="number"
+                      value={subagentConfig?.num_rounds ?? 3}
+                      onChange={e => onUpdateSub(agent.id, { num_rounds: parseInt(e.target.value) || 3 })}
+                      className="w-16 px-2 py-1 text-xs border rounded-md bg-white"
+                      min={1} max={5}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10.5px] font-medium text-gray-500 uppercase tracking-wide">Critic prompt</label>
+                    <textarea
+                      defaultValue={subagentConfig?.critic_prompt ?? ""}
+                      onBlur={e => { const v = e.target.value; if (v !== (subagentConfig?.critic_prompt ?? "")) onUpdateSub(agent.id, { critic_prompt: v || undefined }); }}
+                      className="w-full mt-1 px-2 py-1.5 text-xs border rounded-md resize-none bg-white"
+                      rows={2}
+                    />
+                  </div>
+                </>
+              )}
+            </fieldset>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export default function App() {
-  const { stage, expectedAnswer, plan, graph, agentStates, finalAnswer, error, isLoading, isRefining, subagentModel, chatMessages, undoStack, redoStack, customAgents, generatePlan, executePlan, cancelExecution, refinePlan, undoPlan, redoPlan, switchToPlan, designAgent, updateCustomAgent, setSubagentModel, goToStage, reset } = useOrchestration();
-  const [input, setInput] = useState({ problem: "", expected: "", mode: "custom" as Mode, dom: "high" as DomLevel });
-  const [chatInput, setChatInput] = useState("");
-  const [openAgentId, setOpenAgentId] = useState<string | null>(null);
-  const [previewGraph, setPreviewGraph] = useState<{ plan: import("./types").Plan; label: string } | null>(null);
-  const [showXml, setShowXml] = useState(false);
-  const [showVersionPicker, setShowVersionPicker] = useState(false);
-  const [activeVersionLabel, setActiveVersionLabel] = useState<string | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+/* ────────────────────────────────────────────────────────────────
+   Chat turns
+   ──────────────────────────────────────────────────────────────── */
+function Avatar({ role }: { role: "user" | "assistant" }) {
+  if (role === "user") {
+    return <div className="w-7 h-7 rounded-md bg-gray-800 text-white text-[10px] font-bold flex items-center justify-center flex-none">You</div>;
+  }
+  return <div className="w-7 h-7 rounded-md bg-gradient-to-br from-blue-500 to-blue-600 text-white text-[10px] font-bold flex items-center justify-center flex-none">MO</div>;
+}
 
-  const stageRefs = {
-    input: useRef<HTMLDivElement>(null),
-    plan: useRef<HTMLDivElement>(null),
-    execute: useRef<HTMLDivElement>(null),
-    result: useRef<HTMLDivElement>(null),
-  };
+function UserTurn({ content }: { content: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="user" />
+      <div className="flex-1">
+        <div className="text-xs text-gray-500 mb-1">You</div>
+        <div className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{content}</div>
+      </div>
+    </div>
+  );
+}
 
-  useEffect(() => {
-    // Small delay so the DOM has rendered the new stage content
-    const t = setTimeout(() => {
-      const ref = stageRefs[stage];
-      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 80);
-    return () => clearTimeout(t);
-  }, [stage]);
-
-  useEffect(() => {
-    // Scroll within chat panel only, not the page
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [chatMessages]);
-
-  const isDirect = plan?.graph.direct_solution != null;
-  const canSelect = (s: Stage) => {
-    if (s === "input") return true;
-    if (s === "plan") return !!plan;
-    if (s === "execute") return !!plan && !isDirect;
-    if (s === "result") return !!finalAnswer || isDirect;
-    return false;
-  };
-
-  const handleNavSelect = (s: Stage) => {
-    goToStage(s);
+function AssistantPlanTurn({
+  content, plan, versionLabel,
+  agentStates, customAgents, subagentConfigs,
+  onUpdateCustom, onUpdateSub,
+  onViewGraph, locked,
+}: {
+  content: string;
+  plan: Plan;
+  versionLabel: string;
+  agentStates: Record<string, AgentState>;
+  customAgents: CustomAgentConfig[];
+  subagentConfigs: Record<string, SubagentConfig>;
+  onUpdateCustom: (name: string, u: Partial<CustomAgentConfig>) => void;
+  onUpdateSub: (id: string, u: Partial<SubagentConfig>) => void;
+  onViewGraph: () => void;
+  locked: boolean;
+}) {
+  const agents = plan.graph.agents;
+  const isDirect = !!plan.graph.direct_solution;
+  const COLLAPSE_THRESHOLD = 6;
+  const [showAll, setShowAll] = useState(false);
+  const [listOpen, setListOpen] = useState(true);
+  // Force-open during execute so running status is visible.
+  const listExpanded = listOpen || locked;
+  const expanded = showAll || locked;
+  const hiddenCount = Math.max(0, agents.length - COLLAPSE_THRESHOLD);
+  const visibleAgents = expanded || hiddenCount === 0 ? agents : agents.slice(0, COLLAPSE_THRESHOLD);
+  const statusCounts = {
+    running: Object.values(agentStates).filter(s => s.status === "running").length,
+    completed: Object.values(agentStates).filter(s => s.status === "completed").length,
+    failed: Object.values(agentStates).filter(s => s.status === "failed").length,
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b">
-        <div className="max-w-5xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">MAS-Orchestra</h1>
-              <p className="text-sm text-gray-500">Multi-Agent System Orchestration</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <a href="https://github.com/SalesforceAIResearch/MAS-Orchestra" target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border rounded-lg hover:bg-gray-50">
-                <GitHubIcon /> GitHub
-              </a>
-              <a href="https://arxiv.org/abs/2601.14652" target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border rounded-lg hover:bg-gray-50">
-                <PaperIcon /> Paper
-              </a>
-              <a href="https://vincent950129.github.io/mas-design/mas_r1/" target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border rounded-lg hover:bg-gray-50">
-                <GlobeIcon /> Project
-              </a>
-            </div>
+    <div className="flex items-start gap-3">
+      <Avatar role="assistant" />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-gray-500 mb-1">Orchestra <span className="text-gray-300">·</span> designed plan <span className="text-gray-300">·</span> {versionLabel}</div>
+        <div className="text-sm text-gray-800 leading-relaxed mb-3 whitespace-pre-wrap">{content}</div>
+
+        {isDirect && plan.graph.direct_solution && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-gray-800 whitespace-pre-wrap">
+            <div className="text-[11px] text-amber-700 font-medium uppercase tracking-wide mb-1">Direct solution</div>
+            {plan.graph.direct_solution}
           </div>
-          <div className="flex items-center gap-3 text-xs font-medium mt-2">
-            <span style={{ color: "#00A1E0" }}>Salesforce AI Research</span>
-            <span className="text-gray-300">&bull;</span>
-            <span style={{ color: "#A31F34" }}>MIT</span>
-            <span className="text-gray-300">&bull;</span>
-            <span style={{ color: "#C5050C" }}>UW Madison</span>
+        )}
+
+        {!isDirect && agents.length > 0 && (
+          <div className="border rounded-lg bg-white overflow-hidden">
+            <button
+              onClick={() => !locked && setListOpen(o => !o)}
+              disabled={locked}
+              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 disabled:hover:bg-transparent text-left"
+            >
+              <I.Chev className={`w-3 h-3 text-gray-400 transition-transform flex-none ${listExpanded ? "rotate-90" : ""}`} />
+              <span className="text-xs font-medium text-gray-700">Agent plan</span>
+              <span className="text-[11px] text-gray-400">· {agents.length} agent{agents.length !== 1 ? "s" : ""}</span>
+              {statusCounts.running > 0 && (
+                <span className="flex items-center gap-1 text-[11px] text-amber-700 ml-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  {statusCounts.running} running
+                </span>
+              )}
+              {statusCounts.completed > 0 && (
+                <span className="flex items-center gap-1 text-[11px] text-emerald-700 ml-1">
+                  <I.Check className="w-3 h-3" /> {statusCounts.completed} done
+                </span>
+              )}
+              {statusCounts.failed > 0 && (
+                <span className="flex items-center gap-1 text-[11px] text-red-700 ml-1">
+                  <I.X className="w-3 h-3" /> {statusCounts.failed} failed
+                </span>
+              )}
+              <span
+                onClick={e => { e.stopPropagation(); onViewGraph(); }}
+                role="button"
+                className="ml-auto text-[11px] text-gray-500 hover:text-gray-700 px-2 py-0.5 rounded hover:bg-gray-100"
+              >
+                View graph ↗
+              </span>
+            </button>
+
+            {listExpanded && (
+              <div className="border-t px-2 py-2 space-y-1.5 bg-gray-50/30">
+                {visibleAgents.map(a => (
+                  <AgentToolCard
+                    key={a.id}
+                    agent={a}
+                    state={agentStates[a.id]}
+                    subagentConfig={subagentConfigs[a.id]}
+                    customConfig={customAgents.find(c => c.name === a.id)}
+                    onUpdateSub={onUpdateSub}
+                    onUpdateCustom={onUpdateCustom}
+                    locked={locked}
+                  />
+                ))}
+                {hiddenCount > 0 && !expanded && (
+                  <button
+                    onClick={() => setShowAll(true)}
+                    className="w-full py-2 text-xs text-gray-500 hover:text-gray-700 border border-dashed rounded-lg hover:bg-white transition-colors"
+                  >
+                    Show {hiddenCount} more agent{hiddenCount === 1 ? "" : "s"} ↓
+                  </button>
+                )}
+                {hiddenCount > 0 && expanded && !locked && (
+                  <button
+                    onClick={() => setShowAll(false)}
+                    className="w-full py-1.5 text-[11px] text-gray-400 hover:text-gray-600"
+                  >
+                    Collapse ↑
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AssistantMessageTurn({ content }: { content: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="assistant" />
+      <div className="flex-1">
+        <div className="text-xs text-gray-500 mb-1">Orchestra</div>
+        <div className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{content}</div>
+      </div>
+    </div>
+  );
+}
+
+function AssistantAnswerTurn({
+  answer, onCopy, onRerun, isExecuting, versionLabel, isLatest,
+}: {
+  answer: string;
+  onCopy: () => void; onRerun: () => void;
+  isExecuting: boolean;
+  versionLabel: string;
+  isLatest: boolean;
+}) {
+  const [open, setOpen] = useState(isLatest);
+  useEffect(() => { setOpen(isLatest); }, [isLatest]);
+
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="assistant" />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-gray-500 mb-1">Orchestra <span className="text-gray-300">·</span> answer <span className="text-gray-300">·</span> {versionLabel}</div>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 overflow-hidden">
+          <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-emerald-50 transition-colors">
+            <I.Chev className={`w-3 h-3 text-emerald-600 transition-transform flex-none ${open ? "rotate-90" : ""}`} />
+            <div className="text-xs text-emerald-700 font-medium uppercase tracking-wide">Answer</div>
+            <span className="text-[11px] text-emerald-700/70">{versionLabel}</span>
+            {!open && (
+              <span className="text-xs text-gray-700 truncate ml-1">· {answer.slice(0, 80)}{answer.length > 80 ? "…" : ""}</span>
+            )}
+          </button>
+          {open && (
+            <div className="px-4 pb-3">
+              <div className="text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">{answer}</div>
+            </div>
+          )}
+        </div>
+        {open && (
+          <div className="flex items-center gap-1.5 mt-2">
+            <button onClick={onRerun} disabled={isExecuting}
+              className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border bg-white hover:bg-gray-50 disabled:opacity-50">
+              <I.Refresh className="w-3 h-3" /> Re-run
+            </button>
+            <button onClick={onCopy}
+              className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border bg-white hover:bg-gray-50">
+              <I.Copy className="w-3 h-3" /> Copy
+            </button>
+            {isLatest && <span className="text-[11px] text-gray-400 ml-auto">Ask in the composer below to refine.</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   ChatSpine — the main scrolling conversation
+   ──────────────────────────────────────────────────────────────── */
+function ChatSpine({
+  messages, agentStates, isRefining,
+  isExecuting,
+  customAgents, subagentConfigs,
+  onUpdateCustom, onUpdateSub,
+  onRerun, onCopy,
+  onExpandGraph,
+}: {
+  messages: ChatMessage[];
+  agentStates: Record<string, AgentState>;
+  isRefining: boolean;
+  isExecuting: boolean;
+  customAgents: CustomAgentConfig[];
+  subagentConfigs: Record<string, SubagentConfig>;
+  onUpdateCustom: (name: string, u: Partial<CustomAgentConfig>) => void;
+  onUpdateSub: (id: string, u: Partial<SubagentConfig>) => void;
+  onRerun: () => void;
+  onCopy: () => void;
+  onExpandGraph: () => void;
+}) {
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [messages, agentStates]);
+
+  let planVersion = 0;
+  let answerVersion = 0;
+  const latestPlanIdx = messages.map(m => !!m.plan).lastIndexOf(true);
+  const latestAnswerIdx = messages.map(m => !!m.isAnswer).lastIndexOf(true);
+
+  return (
+    <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
+      {messages.map((msg, i) => {
+        if (msg.plan) planVersion++;
+        if (msg.isAnswer) answerVersion++;
+        const isLatestPlan = i === latestPlanIdx;
+        const isLatestAnswer = i === latestAnswerIdx;
+        return (
+          <div key={i} className="max-w-3xl mx-auto">
+            {msg.role === "user" ? (
+              <UserTurn content={msg.content} />
+            ) : msg.plan ? (
+              <AssistantPlanTurn
+                content={msg.content}
+                plan={msg.plan}
+                versionLabel={`v${planVersion}`}
+                agentStates={isLatestPlan ? agentStates : {}}
+                customAgents={customAgents}
+                subagentConfigs={subagentConfigs}
+                onUpdateCustom={onUpdateCustom}
+                onUpdateSub={onUpdateSub}
+                onViewGraph={onExpandGraph}
+                locked={isLatestPlan && isExecuting}
+              />
+            ) : msg.isAnswer ? (
+              <AssistantAnswerTurn
+                answer={msg.content}
+                onCopy={onCopy}
+                onRerun={onRerun}
+                isExecuting={isExecuting}
+                versionLabel={`v${answerVersion}`}
+                isLatest={isLatestAnswer}
+              />
+            ) : (
+              <AssistantMessageTurn content={msg.content} />
+            )}
+          </div>
+        );
+      })}
+
+      {isRefining && (
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-start gap-3">
+            <Avatar role="assistant" />
+            <div className="flex-1 flex items-center gap-1.5 py-2">
+              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Progress Rail */}
-      <ProgressRail
-        current={stage}
-        agentStates={agentStates}
-        plan={plan}
-        isLoading={isLoading}
-        onSelect={handleNavSelect}
-        canSelect={canSelect}
+      <div ref={endRef} />
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Composer — bottom input with slash shortcuts + Enter-to-send
+   ──────────────────────────────────────────────────────────────── */
+const COMPOSER_EXAMPLES = [
+  "add and parallelize 10 agents",
+  "design a custom agent that verifies citations",
+  "remove the reflexion step and reconnect",
+  "swap the summarizer for a DebateAgent",
+  "add a WebSearchAgent before the analyzer",
+];
+
+function Composer({
+  value, onChange, onSubmit, disabled,
+  subagentModel, onCancel, canCancel,
+  pendingQueue, onEditQueued, onRemoveQueued,
+}: {
+  value: string; onChange: (s: string) => void; onSubmit: () => void;
+  disabled: boolean;
+  subagentModel: SubagentModel;
+  onCancel: () => void; canCancel: boolean;
+  pendingQueue: string[];
+  onEditQueued: (i: number, t: string) => void;
+  onRemoveQueued: (i: number) => void;
+}) {
+  const canSend = value.trim().length > 0;
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [queueOpen, setQueueOpen] = useState(true);
+
+  const submitAndRefocus = () => {
+    if (!canSend) return;
+    onSubmit();
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
+  const [exampleIdx, setExampleIdx] = useState(() => Math.floor(Math.random() * COMPOSER_EXAMPLES.length));
+  useEffect(() => {
+    const id = setInterval(() => setExampleIdx(i => (i + 1) % COMPOSER_EXAMPLES.length), 3500);
+    return () => clearInterval(id);
+  }, []);
+  const placeholder = `Try: "${COMPOSER_EXAMPLES[exampleIdx]}"`;
+
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 192) + "px";
+  }, [value]);
+
+  const commitEdit = () => {
+    if (editingIdx === null) return;
+    const v = editValue.trim();
+    if (!v) onRemoveQueued(editingIdx);
+    else onEditQueued(editingIdx, v);
+    setEditingIdx(null);
+    setEditValue("");
+  };
+
+  return (
+    <div className="border-t bg-white flex-none">
+      <div className="px-5 py-3">
+        {pendingQueue.length > 0 && (
+          <div className="mb-2 space-y-1">
+            <button
+              onClick={() => setQueueOpen(o => !o)}
+              className="flex items-center gap-1.5 text-[10.5px] text-gray-500 uppercase tracking-wide hover:text-gray-700"
+            >
+              <svg className={`w-2.5 h-2.5 transition-transform ${queueOpen ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              Queued · {pendingQueue.length}
+            </button>
+            {queueOpen && pendingQueue.map((msg, i) => (
+              <div key={i} className="flex items-start gap-1.5 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-2.5 py-1.5">
+                {editingIdx === i ? (
+                  <textarea
+                    autoFocus
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(); }
+                      if (e.key === "Escape") { setEditingIdx(null); setEditValue(""); }
+                    }}
+                    onBlur={commitEdit}
+                    rows={1}
+                    className="flex-1 resize-none outline-none text-sm bg-white border border-gray-300 rounded px-2 py-1 leading-relaxed"
+                  />
+                ) : (
+                  <div className="flex-1 text-sm text-gray-700 leading-relaxed break-words min-w-0">{msg}</div>
+                )}
+                <div className="flex items-center gap-0.5 flex-none mt-0.5">
+                  <button
+                    onClick={() => { setEditingIdx(i); setEditValue(msg); }}
+                    className="p-1 text-gray-400 hover:text-gray-700 rounded hover:bg-gray-200"
+                    title="Edit"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => onRemoveQueued(i)}
+                    className="p-1 text-gray-400 hover:text-red-600 rounded hover:bg-red-50"
+                    title="Remove"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2 focus-within:border-gray-400 transition-colors">
+          <textarea
+            ref={taRef}
+            rows={1}
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submitAndRefocus();
+              }
+            }}
+            placeholder={disabled ? "Queue a message while this runs…" : placeholder}
+            className="flex-1 resize-none outline-none text-sm placeholder:text-gray-400 leading-relaxed min-h-[24px] max-h-48 bg-transparent overflow-y-auto"
+          />
+          <div className="flex items-center gap-1 flex-none">
+            {canCancel && (
+              <button onClick={onCancel}
+                className="px-2.5 py-1.5 rounded-md bg-red-500 text-white text-xs font-medium hover:bg-red-600">
+                Cancel
+              </button>
+            )}
+            <button
+              onClick={submitAndRefocus}
+              disabled={!canSend}
+              className="px-2.5 py-1.5 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:bg-gray-300 flex items-center gap-1"
+            >
+              {disabled ? "Queue" : "Send"} <I.Send className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center justify-between mt-1.5 text-[11px] text-gray-400">
+          <div>Enter to send · Shift+Enter for newline</div>
+          <div>{SUBAGENT_MODELS.find(m => m.value === subagentModel)?.label ?? subagentModel}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   RightSidebar — mini graph peek
+   ──────────────────────────────────────────────────────────────── */
+function RightSidebar({
+  graph, agentStates, onExpand, onUndo, onRedo, canUndo, canRedo,
+}: {
+  graph: Plan["graph"]; agentStates: Record<string, AgentState>;
+  onExpand: () => void;
+  onUndo: () => void; onRedo: () => void; canUndo: boolean; canRedo: boolean;
+}) {
+  return (
+    <div className="h-full flex flex-col w-[340px]">
+      <div className="h-9 border-b flex items-center px-3 text-xs text-gray-500 gap-1 flex-none">
+        <span className="font-medium text-gray-700">Graph</span>
+        <span className="text-gray-400">· {graph.agents.length} agents</span>
+        <div className="ml-auto flex items-center gap-0.5">
+          <button onClick={onUndo} disabled={!canUndo} title="Undo"
+            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-default text-gray-500">
+            <I.Undo className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={onRedo} disabled={!canRedo} title="Redo"
+            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-default text-gray-500">
+            <I.Redo className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={onExpand} title="Expand"
+            className="p-1 rounded hover:bg-gray-100 text-gray-500">
+            <I.Expand className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 bg-gray-50">
+        <GraphViewer graph={graph} agentStates={agentStates} hideExpandButton />
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   App shell
+   ──────────────────────────────────────────────────────────────── */
+export default function App() {
+  const orch = useOrchestration();
+  const {
+    stage, plan, graph, agentStates, finalAnswer, error, isLoading, isRefining,
+    subagentModel, chatMessages, undoStack, redoStack, customAgents, subagentConfigs,
+    pendingQueue,
+    generatePlan, executePlan, cancelExecution, cancelRefine, undoPlan, redoPlan,
+    queueRefine, editQueued, removeQueued,
+    switchToPlan, updateCustomAgent, updateSubagentConfig, setSubagentModel, reset,
+  } = orch;
+
+  const planHistory: Plan[] = chatMessages.filter(m => m.plan).map(m => m.plan!);
+
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+  const [input, setInput] = useState({ problem: "", expected: "", mode: "custom" as Mode, dom: "high" as DomLevel });
+  const [chatInput, setChatInput] = useState("");
+  const [expandedGraph, setExpandedGraph] = useState(false);
+
+  const hasConversation = plan !== null;
+  const stageKey: "plan" | "execute" | "result" =
+    stage === "execute" ? "execute" : stage === "result" ? "result" : "plan";
+
+  const submitCustom = () => {
+    if (!input.problem.trim()) return;
+    generatePlan(input.problem.trim(), null, input.dom, input.expected.trim());
+  };
+
+  const submitDataset = (question: string, answer: string) => {
+    const dataset = input.mode as Dataset;
+    const dom = DATASETS.find(d => d.value === dataset)?.dom ?? "high";
+    generatePlan(question, dataset, dom, answer);
+  };
+
+  const handleRefine = () => {
+    const v = chatInput.trim();
+    if (!v) return;
+    queueRefine(v);
+    setChatInput("");
+  };
+
+  const handleCopy = () => {
+    if (finalAnswer) navigator.clipboard?.writeText(finalAnswer);
+  };
+
+  const handleReset = () => {
+    reset();
+    setInput({ problem: "", expected: "", mode: "custom", dom: "high" });
+    setChatInput("");
+  };
+
+  const canExecute = !!plan && !isLoading && !isRefining && stage === "plan";
+
+  return (
+    <div className="h-screen flex flex-col bg-gray-50">
+      <TopBar
+        onToggleLeft={() => setLeftOpen(v => !v)}
+        onToggleRight={() => setRightOpen(v => !v)}
+        onReset={handleReset}
+        showGraphToggle={hasConversation && !!graph && !expandedGraph}
       />
 
-      {/* All stages rendered vertically */}
-      <div className={`mx-auto px-6 py-8 space-y-8 transition-all ${stage === "plan" ? "max-w-7xl" : "max-w-5xl"}`}>
-        {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
+      <div className="flex flex-1 min-h-0">
+        {/* Left sidebar */}
+        <aside className={`border-r bg-white overflow-hidden transition-[width] duration-200 flex-none ${leftOpen ? "w-60" : "w-0"}`}>
+          <LeftSidebar
+            mode={input.mode}
+            onModeChange={m => setInput(s => ({ ...s, mode: m }))}
+            dom={input.dom}
+            onDomChange={d => setInput(s => ({ ...s, dom: d }))}
+            subagentModel={subagentModel}
+            onSubagentChange={setSubagentModel}
+            disabled={hasConversation}
+          />
+        </aside>
 
-        {/* INPUT STAGE */}
-        <StageWrapper stage="input" current={stage} stageRef={stageRefs.input} onActivate={() => handleNavSelect("input")}>
-          <div className="bg-white rounded-xl border p-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Problem</label>
-              <textarea value={input.problem} onChange={e => setInput(s => ({ ...s, problem: e.target.value }))}
-                placeholder="Enter your problem..." className="w-full h-28 px-3 py-2 border rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500" />
+        {/* Main */}
+        <main className="flex-1 flex flex-col min-w-0 bg-gray-50">
+          {error && (
+            <div className="mx-5 mt-3 p-2.5 bg-red-50 border border-red-200 rounded-md text-xs text-red-700">
+              {error}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Expected Answer <span className="text-gray-400">(optional)</span></label>
-              <input value={input.expected} onChange={e => setInput(s => ({ ...s, expected: e.target.value }))}
-                placeholder="For comparison..." className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-medium text-gray-700">Mode</label>
-                <select value={input.mode} onChange={e => setInput(s => ({ ...s, mode: e.target.value as Mode }))} className="px-3 py-1.5 border rounded-lg text-sm">
-                  {MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                </select>
-              </div>
-              {input.mode === "custom" ? (
-                <div className="flex flex-wrap items-center gap-3 p-3 bg-gray-50 border rounded-lg">
-                  <span className="text-sm font-medium text-gray-700">Degree of MAS (DoM)</span>
-                  <div className="flex gap-1 p-0.5 bg-white border rounded-md">
-                    {DOM_OPTIONS.map(d => (
-                      <button
-                        key={d.value}
-                        type="button"
-                        onClick={() => setInput(s => ({ ...s, dom: d.value }))}
-                        className={`px-3 py-1 text-xs font-medium rounded transition-colors ${input.dom === d.value ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"}`}
-                      >
-                        {d.label}{d.hint && <span className={input.dom === d.value ? "text-blue-100" : "text-gray-400"}> ({d.hint})</span>}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <DatasetPicker dataset={input.mode as Dataset} onSelect={(question, answer) => setInput(s => ({ ...s, problem: question, expected: answer }))} />
-              )}
-            </div>
-            <details className="border rounded-lg">
-              <summary className="px-3 py-2 text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 select-none">
-                Agent Pool ({AGENT_POOL.length})
-              </summary>
-              <div className="px-3 py-2 border-t space-y-2">
-                {AGENT_POOL.map(a => (
-                  <div key={a.type} className="flex items-start gap-3">
-                    <Badge type={a.type} />
-                    <span className="text-sm text-gray-600">{a.description}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700">Sub-agent Model</label>
-                <select value={subagentModel} onChange={e => setSubagentModel(e.target.value as SubagentModel)} className="px-3 py-1.5 border rounded-lg text-sm">
-                  {SUBAGENT_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                </select>
-              </div>
-              <button onClick={() => {
-                if (!input.problem.trim()) return;
-                const dataset = input.mode === "custom" ? null : (input.mode as Dataset);
-                const dom = dataset ? (DATASETS.find(d => d.value === dataset)?.dom ?? "high") : input.dom;
-                generatePlan(input.problem.trim(), dataset, dom, input.expected.trim());
-              }}
-                disabled={!input.problem.trim() || isLoading} className="px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300">
-                {isLoading && stage === "input" ? "Generating\u2026" : "Generate Plan \u2192"}
-              </button>
-            </div>
-          </div>
-        </StageWrapper>
+          )}
 
-        {/* PLAN STAGE — Side-by-side chat + graph */}
-        {plan && (
-          <StageWrapper stage="plan" current={stage} stageRef={stageRefs.plan} onActivate={() => handleNavSelect("plan")}>
-            {/* Direct solution banner */}
-            {isDirect && (
-              <div className="bg-white rounded-xl border p-4 mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 text-amber-700">Direct Solution</span>
-                  <span className="text-sm text-gray-500">Metaagent solved this directly</span>
-                </div>
-                <p className="text-sm text-gray-800 whitespace-pre-wrap">{plan.graph.direct_solution}</p>
-              </div>
-            )}
-
-            {!isDirect && (
-              <div className="flex gap-4" style={{ height: "calc(100vh - 220px)", minHeight: 500 }}>
-                {/* Left: Chat panel */}
-                <div className="flex flex-col w-[45%] bg-white rounded-xl border overflow-hidden">
-                  {/* Chat header with undo/redo */}
-                  <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
-                    <span className="text-sm font-medium text-gray-700">Plan Chat</span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => { undoPlan(); setPreviewGraph(null); setActiveVersionLabel(null); }}
-                        disabled={undoStack.length === 0}
-                        title="Undo"
-                        className="p-1.5 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-default text-gray-500"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4" /></svg>
-                      </button>
-                      <button
-                        onClick={() => { redoPlan(); setPreviewGraph(null); setActiveVersionLabel(null); }}
-                        disabled={redoStack.length === 0}
-                        title="Redo"
-                        className="p-1.5 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-default text-gray-500"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" /></svg>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Messages */}
-                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                    {(() => {
-                      let planVersion = 0;
-                      return chatMessages.map((msg, i) => {
-                        if (msg.plan) planVersion++;
-                        const ver = planVersion;
-                        return (
-                          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                            <div className={`max-w-[90%] rounded-2xl px-3.5 py-2 ${
-                              msg.role === "user"
-                                ? "bg-blue-600 text-white rounded-br-md"
-                                : "bg-gray-100 text-gray-800 rounded-bl-md"
-                            }`}>
-                              <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                              {msg.plan && msg.plan.graph.agents.length > 0 && (
-                                <button
-                                  onClick={() => setPreviewGraph({ plan: msg.plan!, label: `v${ver}` })}
-                                  className={`mt-2 flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium transition-colors ${
-                                    msg.role === "user"
-                                      ? "bg-blue-500/40 text-blue-100 hover:bg-blue-500/60"
-                                      : "bg-white border text-gray-600 hover:bg-gray-50"
-                                  }`}
-                                >
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-                                  {msg.plan.graph.agents.length} agents — view graph
-                                </button>
-                              )}
-                              {msg.role === "assistant" && msg.plan && (() => {
-                                const customs = msg.plan.graph.agents.filter(a => a.type === "CustomAgent");
-                                return customs.length > 0 ? (
-                                  <div className="mt-1.5 flex flex-wrap gap-1">
-                                    {customs.map(a => (
-                                      <span key={a.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded bg-pink-50 text-pink-600 border border-pink-200">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-pink-400" />
-                                        {a.id}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : null;
-                              })()}
-                            </div>
-                          </div>
-                        );
-                      });
-                    })()}
-                    {isRefining && (
-                      <div className="flex justify-start">
-                        <div className="bg-gray-100 rounded-2xl rounded-bl-md px-3.5 py-2">
-                          <div className="flex items-center gap-2 text-sm text-gray-400">
-                            <div className="flex gap-1">
-                              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    <div ref={chatEndRef} />
-                  </div>
-
-                  {/* Chat input */}
-                  {stage === "plan" && (
-                    <div className="border-t p-3 space-y-2">
-                      <div className="flex gap-2">
-                        <input
-                          value={chatInput}
-                          onChange={e => setChatInput(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === "Enter" && chatInput.trim() && !isRefining) {
-                              refinePlan(chatInput.trim());
-                              setChatInput("");
-                              setActiveVersionLabel(null);
-                            }
-                          }}
-                          placeholder="e.g. &quot;add and parallelize 10 agents&quot;, &quot;design a custom agent&quot;"
-                          className="flex-1 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          disabled={isRefining}
-                        />
-                        <button
-                          onClick={() => {
-                            if (chatInput.trim() && !isRefining) {
-                              refinePlan(chatInput.trim());
-                              setChatInput("");
-                              setActiveVersionLabel(null);
-                            }
-                          }}
-                          disabled={!chatInput.trim() || isRefining}
-                          className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 transition-colors"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Right: Graph + Execute */}
-                <div className="flex-1 flex flex-col gap-3">
-                <div className="flex-1 bg-white rounded-xl border overflow-hidden flex flex-col">
-                  <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-700">Agent Graph</span>
-                      <div className="relative">
-                        <button
-                          onClick={() => setShowVersionPicker(v => !v)}
-                          className="px-1.5 py-0.5 text-xs bg-blue-100 text-blue-700 rounded font-medium hover:bg-blue-200 transition-colors cursor-pointer"
-                        >
-                          {previewGraph ? previewGraph.label : activeVersionLabel || (() => {
-                            let v = 0;
-                            for (const m of chatMessages) { if (m.plan) v++; }
-                            return v > 0 ? `v${v}` : "v1";
-                          })()}
-                          <svg className="w-2.5 h-2.5 ml-0.5 inline" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></svg>
-                        </button>
-                        {showVersionPicker && (
-                          <>
-                            <div className="fixed inset-0 z-40" onClick={() => setShowVersionPicker(false)} />
-                            <div className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border z-50 py-1 min-w-[120px] max-h-[200px] overflow-y-auto">
-                              {(() => {
-                                const versions: { label: string; plan: import("./types").Plan; isCurrent: boolean }[] = [];
-                                let v = 0;
-                                for (const m of chatMessages) {
-                                  if (m.plan && m.plan.graph.agents.length > 0) {
-                                    v++;
-                                    versions.push({ label: `v${v}`, plan: m.plan, isCurrent: plan === m.plan });
-                                  }
-                                }
-                                if (versions.length === 0) return <div className="px-3 py-2 text-xs text-gray-400">No versions yet</div>;
-                                return versions.map(ver => (
-                                  <button
-                                    key={ver.label}
-                                    onClick={() => {
-                                      if (!ver.isCurrent) {
-                                        switchToPlan(ver.plan);
-                                      }
-                                      setActiveVersionLabel(ver.label);
-                                      setPreviewGraph(null);
-                                      setShowVersionPicker(false);
-                                    }}
-                                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 transition-colors flex items-center justify-between gap-3 ${
-                                      ver.isCurrent ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-700"
-                                    }`}
-                                  >
-                                    <span>{ver.label}</span>
-                                    <span className="text-gray-400">{ver.plan.graph.agents.length} agents</span>
-                                  </button>
-                                ));
-                              })()}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setShowXml(x => !x)}
-                        className={`flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${showXml ? "bg-slate-700 text-slate-200" : "text-gray-500 hover:bg-gray-200"}`}
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6" /></svg>
-                        XML
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex-1 relative">
-                    <GraphViewer
-                      key={`plan-${(previewGraph?.plan.graph || graph)!.agents.map(a => a.id).join(",")}`}
-                      graph={(previewGraph?.plan.graph || graph)!}
-                      agentStates={previewGraph ? {} : agentStates}
-                      openAgentId={openAgentId}
-                      onOpenAgentHandled={() => setOpenAgentId(null)}
-                    />
-                    {showXml && (
-                      <div className="absolute inset-x-0 bottom-0 max-h-[50%] bg-slate-900 border-t border-slate-700 flex flex-col">
-                        <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-700">
-                          <span className="text-xs font-medium text-slate-400">Raw XML</span>
-                          <button onClick={() => setShowXml(false)} className="text-slate-500 hover:text-slate-300">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" /></svg>
-                          </button>
-                        </div>
-                        <pre className="flex-1 overflow-auto p-3 text-xs text-slate-300 font-mono leading-relaxed">{plan.xml}</pre>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {customAgents.length > 0 && (
-                  <details className="border rounded-lg bg-white overflow-hidden">
-                    <summary className="px-3 py-2 text-xs font-medium text-gray-600 cursor-pointer hover:bg-gray-50 select-none flex items-center gap-2">
-                      <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-pink-100 text-pink-700">Custom</span>
-                      {customAgents.length} custom agent{customAgents.length > 1 ? "s" : ""} configured
-                    </summary>
-                    <div className="border-t divide-y max-h-[200px] overflow-y-auto">
-                      {customAgents.map(cfg => (
-                        <CustomAgentCard key={cfg.name} config={cfg} onUpdate={updateCustomAgent} />
-                      ))}
-                    </div>
-                  </details>
-                )}
-                {stage === "plan" && (
-                  <button onClick={executePlan} disabled={isLoading || isRefining} className="w-full px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:bg-gray-300 transition-colors">
-                    Execute Plan &rarr;
-                  </button>
-                )}
-                {stage === "execute" && isLoading && (
-                  <button onClick={cancelExecution} className="w-full px-5 py-2.5 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors">
-                    Cancel Execution
-                  </button>
-                )}
-                </div>
-              </div>
-            )}
-
-            {/* Direct solution actions */}
-            {isDirect && stage === "plan" && (
-              <div className="flex gap-3 mt-3">
-                <button onClick={() => goToStage("result")} className="ml-auto px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700">
-                  View Result &rarr;
+          {!hasConversation ? (
+            <EmptyState
+              mode={input.mode}
+              dom={input.dom} onDomChange={d => setInput(s => ({ ...s, dom: d }))}
+              problem={input.problem} onProblemChange={p => setInput(s => ({ ...s, problem: p }))}
+              expected={input.expected} onExpectedChange={e => setInput(s => ({ ...s, expected: e }))}
+              onSubmitCustom={submitCustom}
+              onSubmitDataset={submitDataset}
+              isLoading={isLoading}
+            />
+          ) : expandedGraph && graph ? (
+            <>
+              <div className="h-11 border-b bg-white flex items-center px-4 gap-2 flex-none">
+                <span className="text-sm font-medium text-gray-700">Multi-agent System (MAS)</span>
+                <span className="text-xs text-gray-400">· {graph.agents.length} agents</span>
+                <button onClick={() => setExpandedGraph(false)}
+                  className="ml-auto text-xs px-2.5 py-1 rounded-md border bg-white hover:bg-gray-50 text-gray-600">
+                  Close
                 </button>
               </div>
-            )}
-          </StageWrapper>
-        )}
+              <div className="flex-1 min-h-0 bg-gray-50">
+                <GraphViewer graph={graph} agentStates={agentStates} hideExpandButton showMiniMap />
+              </div>
+            </>
+          ) : (
+            <>
+              <ProgressRail
+                stage={stageKey}
+                planAgents={plan?.graph.agents.length ?? 0}
+                agentStates={agentStates}
+                isLoading={isLoading || isRefining}
+                isDirect={!!plan?.graph.direct_solution}
+                canExecute={canExecute}
+                onExecute={executePlan}
+                onRerun={executePlan}
+                planHistory={planHistory}
+                activePlan={plan}
+                onSwitchPlan={switchToPlan}
+              />
+              <ChatSpine
+                messages={chatMessages}
+                agentStates={agentStates}
+                isRefining={isRefining}
+                isExecuting={stage === "execute" && isLoading}
+                customAgents={customAgents}
+                subagentConfigs={subagentConfigs}
+                onUpdateCustom={updateCustomAgent}
+                onUpdateSub={updateSubagentConfig}
+                onRerun={executePlan}
+                onCopy={handleCopy}
+                onExpandGraph={() => setExpandedGraph(true)}
+              />
+              <Composer
+                value={chatInput}
+                onChange={setChatInput}
+                onSubmit={handleRefine}
+                disabled={isRefining || (stage === "execute" && isLoading)}
+                subagentModel={subagentModel}
+                onCancel={isRefining ? cancelRefine : cancelExecution}
+                canCancel={isRefining || (stage === "execute" && isLoading)}
+                pendingQueue={pendingQueue}
+                onEditQueued={editQueued}
+                onRemoveQueued={removeQueued}
+              />
+            </>
+          )}
+        </main>
 
-        {/* EXECUTE STAGE */}
-        {graph && graph.agents.length > 0 && !isDirect && (
-          <StageWrapper stage="execute" current={stage} stageRef={stageRefs.execute} onActivate={() => handleNavSelect("execute")}>
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="w-1.5 h-6 bg-emerald-500 rounded-full" />
-                <h2 className="text-lg font-semibold text-gray-900">Execute</h2>
-              </div>
-              <div className="bg-white rounded-xl border p-4">
-                <GraphViewer graph={graph} agentStates={agentStates} openAgentId={openAgentId} onOpenAgentHandled={() => setOpenAgentId(null)} />
-              </div>
-              <details open className="border rounded-lg">
-                <summary className="px-3 py-2 text-sm font-medium text-gray-700 cursor-pointer hover:bg-gray-50 select-none">
-                  Agent Outputs ({Object.values(agentStates).filter(s => s.status === "completed" || s.status === "failed").length} / {graph.agents.length})
-                </summary>
-                <div className="px-3 py-3 border-t grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {graph.agents.map(a => {
-                    const s = agentStates[a.id];
-                    const status = s?.status || "pending";
-                    const borderColor: Record<string, string> = {
-                      pending: "border-gray-200",
-                      running: "border-amber-300",
-                      completed: "border-emerald-300",
-                      failed: "border-red-300",
-                    };
-                    const dotColor: Record<string, string> = {
-                      pending: "bg-gray-300",
-                      running: "bg-amber-400 animate-pulse",
-                      completed: "bg-emerald-400",
-                      failed: "bg-red-400",
-                    };
-                    const output = s?.output || s?.error || "";
-                    const preview = output.split("\n").slice(0, 4).join("\n");
-                    const hasMore = output.split("\n").length > 4;
-                    return (
-                      <div
-                        key={a.id}
-                        className={`bg-white rounded-lg border ${borderColor[status]} p-3 transition-all ${
-                          status === "running" ? "shadow-sm shadow-amber-100" : ""
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor[status]}`} />
-                          <code className="text-xs font-mono font-medium text-gray-800">{a.id}</code>
-                          <Badge type={a.type} />
-                          {status === "running" && (
-                            <span className="text-xs text-amber-600 ml-auto">running...</span>
-                          )}
-                        </div>
-                        {status === "running" && (
-                          <div className="mt-2 h-1 bg-gray-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-amber-400 rounded-full animate-pulse" style={{ width: "60%" }} />
-                          </div>
-                        )}
-                        {output && (
-                          <div className="mt-2">
-                            <pre className={`text-xs whitespace-pre-wrap break-words rounded-md p-2 max-h-[120px] overflow-y-auto ${
-                              s?.error ? "bg-red-50 text-red-700" : "bg-gray-50 text-gray-700"
-                            }`}>{preview}{hasMore ? "\n..." : ""}</pre>
-                            {hasMore && (
-                              <button
-                                onClick={() => setOpenAgentId(a.id)}
-                                className="text-xs text-blue-600 hover:text-blue-700 mt-1"
-                              >
-                                View full output &rarr;
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
-            </div>
-          </StageWrapper>
-        )}
-
-        {/* RESULT STAGE */}
-        {(finalAnswer || isDirect) && (
-          <StageWrapper stage="result" current={stage} stageRef={stageRefs.result} onActivate={() => handleNavSelect("result")}>
-            <div className="bg-white rounded-xl border p-6 space-y-4">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-1.5 h-6 bg-amber-500 rounded-full" />
-                <h2 className="text-lg font-semibold text-gray-900">Result</h2>
-              </div>
-              {isDirect && (
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 text-amber-700">Direct Solution</span>
-                  <span className="text-sm text-gray-500">Metaagent solved this without delegation</span>
-                </div>
-              )}
-              <h3 className="text-sm font-medium text-gray-500">Final Answer</h3>
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
-                <p className="text-sm text-gray-800 whitespace-pre-wrap">
-                  {isDirect ? plan?.graph.direct_solution : finalAnswer}
-                </p>
-              </div>
-              {expectedAnswer && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-500 mb-2">Expected Answer</h3>
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                    <p className="text-sm text-gray-800">{expectedAnswer}</p>
-                  </div>
-                </div>
-              )}
-              {stage === "result" && (
-                <button onClick={reset} className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">New Problem</button>
-              )}
-            </div>
-          </StageWrapper>
+        {/* Right sidebar (hidden in expanded graph mode to avoid duplicate graphs) */}
+        {hasConversation && graph && !expandedGraph && (
+          <aside className={`border-l bg-white overflow-hidden transition-[width] duration-200 flex-none ${rightOpen ? "w-[340px]" : "w-0"}`}>
+            <RightSidebar
+              graph={graph}
+              agentStates={agentStates}
+              onExpand={() => setExpandedGraph(true)}
+              onUndo={undoPlan}
+              onRedo={redoPlan}
+              canUndo={undoStack.length > 0 && !isRefining && !(stage === "execute" && isLoading)}
+              canRedo={redoStack.length > 0 && !isRefining && !(stage === "execute" && isLoading)}
+            />
+          </aside>
         )}
       </div>
     </div>

@@ -28,8 +28,9 @@ You MUST output valid JSON (no markdown fences) with these fields:
   "num_rounds": 2,            // only for critique (1-4)
   "critic_prompt": "...",     // only for critique — what the critic checks for
   "steps": ["step 1", ...],   // only for pipeline — each step's instruction
-  "enable_web_search": false,  // true if the agent needs to search the web
-  "enable_think_tool": false   // true if the agent benefits from extended thinking/chain-of-thought tool
+  "enable_web_search": false,       // true if the agent needs to search the web (native GPT-5.1 web_search via Responses API)
+  "enable_think_tool": false,       // true if the agent benefits from extended thinking/chain-of-thought tool
+  "enable_code_interpreter": false  // true if the agent needs to run Python / do math / analyze data
 }
 
 ## Guidelines
@@ -38,8 +39,10 @@ You MUST output valid JSON (no markdown fences) with these fields:
 - Choose the simplest strategy that matches the user's intent
 - Name should be PascalCase, descriptive, ending in "Agent" (e.g., "DevilsAdvocateAgent")
 - The description the user gives may be vague — interpret it generously and design something useful
-- Enable web_search when the agent needs real-time info, fact-checking, or research
+- Enable web_search when the agent needs real-time info, fact-checking, or research (GPT-5.1 native web_search)
 - Enable think_tool when the agent needs deep reasoning, math verification, or multi-step logic
+- Enable code_interpreter when the agent needs to run Python, do precise math, analyze data, or produce plots/files (uses OpenAI Responses API natively)
+- MCP servers are configured manually by the user — do not set mcp_servers in your output
 - If the user mentions "best of N", "sampling", or "verification", use multi_sample strategy with appropriate num_samples"""
 
 
@@ -69,4 +72,5 @@ async def design_agent(description: str) -> CustomAgentConfig:
         steps=data.get("steps", []),
         enable_web_search=data.get("enable_web_search", False),
         enable_think_tool=data.get("enable_think_tool", False),
+        enable_code_interpreter=data.get("enable_code_interpreter", False),
     )

@@ -25,11 +25,24 @@ pre::-webkit-scrollbar-thumb {
   @apply transition-colors duration-150;
 }
 
-/* Better focus states */
+/* Better focus states — subtle, no blue ring on text inputs */
 button:focus-visible,
-textarea:focus-visible,
 select:focus-visible {
-  @apply outline-none ring-2 ring-blue-500 ring-offset-2;
+  @apply outline-none ring-1 ring-gray-400 ring-offset-1;
+}
+
+textarea:focus-visible,
+input:focus-visible {
+  @apply outline-none;
+}
+
+/* Hide scrollbar but keep scroll functionality */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* Subtle pulse for active progress dot */

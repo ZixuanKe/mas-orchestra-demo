@@ -44,6 +44,13 @@ export interface DatasetSample {
   answer: string;
 }
 
+export interface MCPServer {
+  server_label: string;
+  server_url: string;
+  headers?: Record<string, string> | null;
+  require_approval?: "never" | "always";
+}
+
 export interface CustomAgentConfig {
   name: string;
   strategy: "single" | "multi_sample" | "critique" | "pipeline";
@@ -54,7 +61,16 @@ export interface CustomAgentConfig {
   steps?: string[];
   enable_web_search?: boolean;
   enable_think_tool?: boolean;
+  enable_code_interpreter?: boolean;
+  mcp_servers?: MCPServer[] | null;
   tools?: { name: string; description: string; parameters?: Record<string, unknown> }[];
+}
+
+export interface SubagentConfig {
+  system_prompt?: string;
+  num_samples?: number;
+  num_rounds?: number;
+  critic_prompt?: string;
 }
 
 export interface Agent {
@@ -64,6 +80,7 @@ export interface Agent {
   input: string;
   depends_on: string[];
   custom_config?: CustomAgentConfig | null;
+  subagent_config?: SubagentConfig | null;
 }
 
 export interface Edge {
@@ -95,4 +112,5 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   plan?: Plan;
+  isAnswer?: boolean;
 }

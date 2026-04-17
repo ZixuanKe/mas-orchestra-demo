@@ -43,6 +43,13 @@ class CustomTool(BaseModel):
     parameters: dict = {}  # JSON Schema for the tool's parameters
 
 
+class MCPServer(BaseModel):
+    server_label: str
+    server_url: str
+    headers: dict[str, str] | None = None
+    require_approval: str = "never"  # "never" | "always"
+
+
 class CustomAgentConfig(BaseModel):
     name: str
     strategy: CustomStrategy
@@ -53,7 +60,17 @@ class CustomAgentConfig(BaseModel):
     steps: list[str] | None = []
     enable_web_search: bool = False
     enable_think_tool: bool = False
+    enable_code_interpreter: bool = False
+    mcp_servers: list[MCPServer] | None = None
     tools: list[CustomTool] | None = []
+
+
+class SubagentConfig(BaseModel):
+    """Per-instance overrides for built-in agent types (CoT/SC/Debate/Reflexion)."""
+    system_prompt: str | None = None  # override role-specific system prompt
+    num_samples: int | None = None    # SCAgent — default 5
+    num_rounds: int | None = None     # ReflexionAgent — default 3
+    critic_prompt: str | None = None  # ReflexionAgent critic override
 
 
 class Agent(BaseModel):
@@ -63,6 +80,7 @@ class Agent(BaseModel):
     input: str
     depends_on: list[str]
     custom_config: CustomAgentConfig | None = None
+    subagent_config: SubagentConfig | None = None
 
 
 class Edge(BaseModel):
