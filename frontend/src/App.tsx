@@ -100,6 +100,72 @@ function TopBar({
 }
 
 /* ────────────────────────────────────────────────────────────────
+   Dropdown — styled replacement for native <select>
+   ──────────────────────────────────────────────────────────────── */
+function Dropdown<T extends string>({
+  value, onChange, options, disabled,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const current = options.find(o => o.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(o => !o)}
+        className={`w-full flex items-center justify-between gap-2 text-sm border rounded-md px-2.5 py-1.5 bg-white transition-colors ${
+          disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-gray-50"
+        } ${open ? "ring-1 ring-blue-400 border-blue-300" : "border-gray-200"}`}
+      >
+        <span className="truncate text-gray-800">{current?.label ?? value}</span>
+        <I.Chev className={`w-3 h-3 text-gray-400 flex-none transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg py-1 overflow-hidden">
+          {options.map(o => {
+            const selected = o.value === value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => { onChange(o.value); setOpen(false); }}
+                className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left transition-colors ${
+                  selected ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                <I.Check className={`w-3 h-3 flex-none ${selected ? "opacity-100" : "opacity-0"}`} />
+                <span className="truncate">{o.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
    LeftSidebar — settings
    ──────────────────────────────────────────────────────────────── */
 function LeftSidebar({
@@ -157,13 +223,11 @@ function LeftSidebar({
 
       <div>
         <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Sub-agent model</div>
-        <select
+        <Dropdown<SubagentModel>
           value={subagentModel}
-          onChange={e => onSubagentChange(e.target.value as SubagentModel)}
-          className="w-full text-sm border rounded-md px-2 py-1.5 bg-white focus:ring-1 focus:ring-blue-400 focus:outline-none"
-        >
-          {SUBAGENT_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
+          onChange={onSubagentChange}
+          options={SUBAGENT_MODELS}
+        />
       </div>
 
       <details className="group">
