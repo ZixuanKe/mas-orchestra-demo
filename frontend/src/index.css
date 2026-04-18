@@ -36,6 +36,14 @@ input:focus-visible {
   @apply outline-none;
 }
 
+/* Kill the native <details> disclosure triangle (we render our own chevron) */
+summary::-webkit-details-marker {
+  display: none;
+}
+summary::marker {
+  content: "";
+}
+
 /* Hide scrollbar but keep scroll functionality */
 .no-scrollbar {
   scrollbar-width: none;

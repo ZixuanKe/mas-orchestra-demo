@@ -789,6 +789,7 @@ function AssistantPlanTurn({
   const COLLAPSE_THRESHOLD = 6;
   const [showAll, setShowAll] = useState(false);
   const [listOpen, setListOpen] = useState(true);
+  const [xmlOpen, setXmlOpen] = useState(false);
   // Force-open during execute so running status is visible.
   const listExpanded = listOpen || locked;
   const expanded = showAll || locked;
@@ -841,13 +842,34 @@ function AssistantPlanTurn({
                 </span>
               )}
               <span
+                onClick={e => { e.stopPropagation(); setXmlOpen(x => !x); }}
+                role="button"
+                className="ml-auto text-[11px] text-gray-500 hover:text-gray-700 px-2 py-0.5 rounded hover:bg-gray-100 font-mono"
+                title="View raw plan XML"
+              >
+                {xmlOpen ? "Hide XML" : "View XML"}
+              </span>
+              <span
                 onClick={e => { e.stopPropagation(); onViewGraph(); }}
                 role="button"
-                className="ml-auto text-[11px] text-gray-500 hover:text-gray-700 px-2 py-0.5 rounded hover:bg-gray-100"
+                className="text-[11px] text-gray-500 hover:text-gray-700 px-2 py-0.5 rounded hover:bg-gray-100"
               >
                 View graph ↗
               </span>
             </button>
+
+            {xmlOpen && (
+              <div className="border-t bg-gray-900 relative">
+                <button
+                  onClick={() => navigator.clipboard?.writeText(plan.xml)}
+                  className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 bg-gray-800 text-gray-300 border border-gray-700 rounded hover:bg-gray-700 z-10"
+                  title="Copy XML"
+                >
+                  Copy
+                </button>
+                <pre className="text-[11px] text-gray-100 p-3 pr-14 overflow-x-auto max-h-[400px] font-mono leading-relaxed whitespace-pre">{plan.xml}</pre>
+              </div>
+            )}
 
             {listExpanded && (
               <div className="border-t px-2 py-2 space-y-1.5 bg-gray-50/30">

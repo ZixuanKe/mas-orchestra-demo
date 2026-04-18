@@ -108,8 +108,9 @@ async def refine(req: RefineRequest) -> RefineResponse:
     if truncated:
         message += "\n\n⚠️ Response was truncated — the plan may be incomplete. Try requesting fewer agents."
 
-    # Check if there's a plan (has <agent> tags)
-    has_plan = "<agent_id>" in raw.lower()
+    # Only treat this as a plan-emission if there's at least one complete <agent>...</agent> block.
+    # Mere mentions of "<agent_id>" inside <message> or <thinking> prose shouldn't qualify.
+    has_plan = bool(re.search(r"<agent>\s*.*?<agent_id>\s*.+?\s*</agent_id>", raw, re.IGNORECASE | re.DOTALL))
     if not has_plan:
         return RefineResponse(message=message)
 
@@ -118,8 +119,9 @@ async def refine(req: RefineRequest) -> RefineResponse:
     try:
         graph = parse(raw, dom_level.value)
         if not graph.agents:
-            print(f"[refine] Warning: parsed 0 agents from XML with <agent_id> tags")
-            return RefineResponse(message=f"{message}\n\n⚠️ Plan XML was detected but no agents could be parsed.")
+            # Parser found <agent> blocks but couldn't extract valid agents — likely malformed/truncated XML.
+            print(f"[refine] Warning: parsed 0 agents from XML that contained <agent> blocks")
+            return RefineResponse(message=f"{message}\n\n⚠️ Plan XML was malformed — showing previous plan. Try rephrasing.")
         print(f"[refine] Parsed {len(graph.agents)} agents, {len(graph.edges)} edges, sink={graph.answer_agent}")
         return RefineResponse(message=message, xml=raw, graph=graph.model_dump(), thinking=thinking)
     except Exception as e:
