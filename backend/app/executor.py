@@ -16,17 +16,50 @@ from .models import Agent, AgentType, CustomStrategy, CustomTool
 
 
 # ---------------------------------------------------------------------------
-# OpenAI client (lazy-initialized)
+# API clients (lazy-initialized)
 # ---------------------------------------------------------------------------
 
-_client: AsyncOpenAI | None = None
+_openai_client: AsyncOpenAI | None = None
+_together_client: AsyncOpenAI | None = None
 
 
-def get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        _client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    return _client
+def _get_openai_client() -> AsyncOpenAI:
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _openai_client
+
+
+def _get_together_client() -> AsyncOpenAI:
+    global _together_client
+    if _together_client is None:
+        _together_client = AsyncOpenAI(
+            api_key=os.getenv("TOGETHER_API_KEY"),
+            base_url="https://api.together.xyz/v1",
+        )
+    return _together_client
+
+
+def _is_together_model(model: str) -> bool:
+    return "/" in model
+
+
+def get_client(model: str = "") -> AsyncOpenAI:
+    if _is_together_model(model):
+        return _get_together_client()
+    return _get_openai_client()
+
+
+def _is_reasoning_model(model: str) -> bool:
+    return model.startswith("o") or "DeepSeek-R1" in model
+
+
+def _supports_temperature(model: str) -> bool:
+    if _is_reasoning_model(model):
+        return False
+    if model.startswith("gpt-5.5"):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +189,7 @@ def resolve_input(agent_input: str, problem: str, ctx: dict[str, str]) -> str:
 
 async def _llm_call(system: str, user: str, model: str, max_tokens: int = 4096) -> str:
     """Single chat completion call with reasoning-model awareness."""
-    is_reasoning = model.startswith("o")
+    is_reasoning = _is_reasoning_model(model)
     kwargs: dict = dict(
         model=model,
         messages=[
@@ -165,9 +198,9 @@ async def _llm_call(system: str, user: str, model: str, max_tokens: int = 4096) 
         ],
         max_completion_tokens=16000 if is_reasoning else max_tokens,
     )
-    if not is_reasoning:
+    if _supports_temperature(model):
         kwargs["temperature"] = 0.5
-    res = await get_client().chat.completions.create(**kwargs)
+    res = await get_client(model).chat.completions.create(**kwargs)
     return res.choices[0].message.content or ""
 
 
@@ -325,14 +358,14 @@ async def _execute_websearch(agent: Agent, problem: str, ctx: dict[str, str], mo
             "Please conduct web searches and provide a comprehensive answer with sources."
         )},
     ]
-    is_reasoning = model.startswith("o")
     base_kwargs: dict = dict(model=model, tools=WEBSEARCH_TOOLS, max_completion_tokens=16000)
-    if not is_reasoning:
+    if _supports_temperature(model):
         base_kwargs["temperature"] = 0.7
 
+    client = get_client(model)
     for iteration in range(max_iterations):
         print(f"  WebSearch {agent.id}: iteration {iteration + 1}/{max_iterations}")
-        res = await get_client().chat.completions.create(messages=messages, **base_kwargs)
+        res = await client.chat.completions.create(messages=messages, **base_kwargs)
         msg = res.choices[0].message
         messages.append(msg)
         if not msg.tool_calls:
@@ -352,7 +385,7 @@ async def _execute_websearch(agent: Agent, problem: str, ctx: dict[str, str], mo
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
     final_kwargs = {k: v for k, v in base_kwargs.items() if k != "tools"}
-    res = await get_client().chat.completions.create(messages=messages, **final_kwargs)
+    res = await client.chat.completions.create(messages=messages, **final_kwargs)
     return res.choices[0].message.content or f"[{agent.id} returned empty response]"
 
 
@@ -412,7 +445,7 @@ async def _responses_api_call(system: str, user: str, model: str, tools: list[di
     Used when enable_code_interpreter is set — Chat Completions doesn't support it.
     """
     print(f"  Custom {agent_id}: Responses API with native tools: {[t['type'] for t in tools]}")
-    resp = await get_client().responses.create(
+    resp = await _get_openai_client().responses.create(
         model=model,
         tools=tools,
         input=[
@@ -442,14 +475,14 @@ async def _tool_calling_loop(
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    is_reasoning = model.startswith("o")
     base_kwargs: dict = dict(model=model, tools=tools, max_completion_tokens=16000)
-    if not is_reasoning:
+    if _supports_temperature(model):
         base_kwargs["temperature"] = 0.5
 
+    client = get_client(model)
     for iteration in range(max_iterations):
         print(f"  Custom {agent_id}: tool loop iteration {iteration + 1}/{max_iterations}")
-        res = await get_client().chat.completions.create(messages=messages, **base_kwargs)
+        res = await client.chat.completions.create(messages=messages, **base_kwargs)
         msg = res.choices[0].message
         messages.append(msg)
 
@@ -474,11 +507,11 @@ async def _tool_calling_loop(
 
     # Max iterations — force a final answer
     final_kwargs = {k: v for k, v in base_kwargs.items() if k != "tools"}
-    res = await get_client().chat.completions.create(messages=messages, **final_kwargs)
+    res = await client.chat.completions.create(messages=messages, **final_kwargs)
     return res.choices[0].message.content or f"[{agent_id} returned empty response]"
 
 
-TOOL_MODEL = "gpt-4.1"  # Stronger model for tool-calling / extended reasoning
+TOOL_MODEL = "gpt-5.4-mini"
 
 
 async def _execute_custom(agent: Agent, problem: str, ctx: dict[str, str], model: str) -> str:
@@ -607,7 +640,7 @@ async def execute_agent(
     agent: Agent,
     problem: str,
     ctx: dict[str, str],
-    model: str = "gpt-4.1-mini",
+    model: str = "gpt-5.4-mini",
     is_answer_agent: bool = False,
 ) -> str:
     """Dispatch a single agent node to the executor matching its type."""

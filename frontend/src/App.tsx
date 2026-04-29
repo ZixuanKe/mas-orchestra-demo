@@ -107,7 +107,7 @@ function Dropdown<T extends string>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; group?: string }[];
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -128,6 +128,14 @@ function Dropdown<T extends string>({
     };
   }, [open]);
 
+  const grouped = options.reduce<{ group: string; items: typeof options }[]>((acc, o) => {
+    const g = o.group || "";
+    const last = acc[acc.length - 1];
+    if (last && last.group === g) last.items.push(o);
+    else acc.push({ group: g, items: [o] });
+    return acc;
+  }, []);
+
   return (
     <div ref={ref} className="relative">
       <button
@@ -142,23 +150,33 @@ function Dropdown<T extends string>({
         <I.Chev className={`w-3 h-3 text-gray-400 flex-none transition-transform ${open ? "rotate-90" : ""}`} />
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg py-1 overflow-hidden">
-          {options.map(o => {
-            const selected = o.value === value;
-            return (
-              <button
-                key={o.value}
-                type="button"
-                onClick={() => { onChange(o.value); setOpen(false); }}
-                className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left transition-colors ${
-                  selected ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-50"
-                }`}
-              >
-                <I.Check className={`w-3 h-3 flex-none ${selected ? "opacity-100" : "opacity-0"}`} />
-                <span className="truncate">{o.label}</span>
-              </button>
-            );
-          })}
+        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg py-1 overflow-hidden max-h-72 overflow-y-auto">
+          {grouped.map((g, gi) => (
+            <div key={g.group || gi}>
+              {g.group && (
+                <>
+                  {gi > 0 && <div className="border-t my-1" />}
+                  <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">{g.group}</div>
+                </>
+              )}
+              {g.items.map(o => {
+                const selected = o.value === value;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => { onChange(o.value); setOpen(false); }}
+                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-sm text-left transition-colors ${
+                      selected ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    <I.Check className={`w-3 h-3 flex-none ${selected ? "opacity-100" : "opacity-0"}`} />
+                    <span className="truncate">{o.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </div>
       )}
     </div>

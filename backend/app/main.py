@@ -62,7 +62,7 @@ class DesignAgentRequest(BaseModel):
 class ExecuteRequest(BaseModel):
     problem: str
     graph: dict
-    subagent_model: str = "gpt-4.1-mini"
+    subagent_model: str = "gpt-5.4-mini"
 
 
 def sse(event: str, data: dict) -> dict:
@@ -138,7 +138,7 @@ async def design_agent_endpoint(req: DesignAgentRequest):
 MAX_CONCURRENT_AGENTS = 10
 
 
-async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "gpt-4.1-mini"):
+async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "gpt-5.4-mini"):
     graph = Graph(**graph_dict)
     yield sse("graph", graph.model_dump())
 

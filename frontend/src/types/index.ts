@@ -18,7 +18,7 @@ export const AGENT_POOL: { type: string; description: string }[] = [
 export type Dataset = "aime" | "hotpot" | "browsecomp";
 export type Mode = "custom" | Dataset;
 export type Stage = "input" | "plan" | "execute" | "result";
-export type SubagentModel = "gpt-4.1-mini" | "gpt-4.1" | "o4-mini";
+export type SubagentModel = string;
 
 export const DATASETS: { value: Dataset; label: string; dom: DomLevel }[] = [
   { value: "aime", label: "AIME 2024/2025 (Low)", dom: "low" },
@@ -35,8 +35,8 @@ export const MODES: { value: Mode; label: string }[] = [
 
 export const SUBAGENT_MODELS: { value: SubagentModel; label: string }[] = [
   { value: "gpt-4.1-mini", label: "GPT-4.1 mini (Fast)" },
-  { value: "gpt-4.1", label: "GPT-4.1 (General)" },
-  { value: "o4-mini", label: "o4-mini (Best)" },
+  { value: "gpt-5.4-mini", label: "GPT-5.4 mini (General)" },
+  { value: "gpt-5.5", label: "GPT-5.5 (Best)" },
 ];
 
 export interface DatasetSample {
