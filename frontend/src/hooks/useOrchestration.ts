@@ -110,7 +110,7 @@ export function useOrchestration() {
           : `Plan generated with ${plan.graph.agents.length} agents. You can refine it by chatting below.`,
         plan,
       };
-      setChatMessages([introMessage]);
+      setChatMessages([{ role: "user", content: problem }, introMessage]);
       setCustomAgents([]);
       setState(s => ({ ...s, stage: "plan", plan, graph: plan.graph, agentStates, finalAnswer: plan.graph.direct_solution || null, isLoading: false }));
     } catch (err) {
