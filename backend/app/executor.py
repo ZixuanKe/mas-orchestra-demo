@@ -346,10 +346,29 @@ async def _execute_reflexion(agent: Agent, problem: str, ctx: dict[str, str], mo
 
 
 async def _execute_websearch(agent: Agent, problem: str, ctx: dict[str, str], model: str) -> str:
-    """Real tool-calling loop with DuckDuckGo. Mirrors WebSearchAgent (max 5 iterations)."""
+    """Web search agent. Uses native Responses API web_search for OpenAI models,
+    falls back to DuckDuckGo tool-calling loop for others."""
     task = resolve_input(agent.input, problem, ctx)
-    max_iterations = 5
     today = datetime.now().strftime("%Y-%m-%d")
+
+    # OpenAI models: use Responses API with native web_search (same quality as ChatGPT)
+    if not _is_together_model(model):
+        print(f"  WebSearch {agent.id}: using Responses API native web_search (model={model})")
+        system_prompt = (
+            f"You are a research assistant. Today's date is {today}.\n\n"
+            f"Role: {agent.description}\n\n"
+            "Search the web to find accurate, up-to-date information. "
+            "Provide a comprehensive answer with sources and citations."
+        )
+        user_msg = f"Original question: {problem}\n\nResearch Task: {task}"
+        return await _responses_api_call(
+            system_prompt, user_msg, model,
+            [{"type": "web_search"}],
+            agent.id,
+        )
+
+    # Non-OpenAI models: DuckDuckGo tool-calling loop
+    max_iterations = 5
     system_prompt = WEBSEARCH_SYSTEM_PROMPT_TEMPLATE.format(date=today)
     messages = [
         {"role": "system", "content": f"{system_prompt}\n\nRole: {agent.description}"},
