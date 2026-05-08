@@ -103,6 +103,10 @@ export function useOrchestration() {
       if (!res.ok) throw new Error(`Plan failed: ${res.status}`);
       const plan: Plan = await res.json();
       const agentStates = Object.fromEntries(plan.graph.agents.map(a => [a.id, { id: a.id, status: "pending" as const }]));
+      const userMessage: ChatMessage = {
+        role: "user",
+        content: problem,
+      };
       const introMessage: ChatMessage = {
         role: "assistant",
         content: plan.thinking
@@ -110,7 +114,7 @@ export function useOrchestration() {
           : `Plan generated with ${plan.graph.agents.length} agents. You can refine it by chatting below.`,
         plan,
       };
-      setChatMessages([introMessage]);
+      setChatMessages([userMessage, introMessage]);
       setCustomAgents([]);
       setState(s => ({ ...s, stage: "plan", plan, graph: plan.graph, agentStates, finalAnswer: plan.graph.direct_solution || null, isLoading: false }));
     } catch (err) {

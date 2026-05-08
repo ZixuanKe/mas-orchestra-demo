@@ -274,7 +274,6 @@ function LeftSidebar({
    ──────────────────────────────────────────────────────────────── */
 function ProgressRail({
   stage, planAgents, agentStates, isLoading, isDirect,
-  canExecute, onExecute, onRerun,
   planHistory, activePlan, onSwitchPlan,
 }: {
   stage: "plan" | "execute" | "result";
@@ -282,9 +281,6 @@ function ProgressRail({
   agentStates: Record<string, AgentState>;
   isLoading: boolean;
   isDirect: boolean;
-  canExecute: boolean;
-  onExecute: () => void;
-  onRerun: () => void;
   planHistory: Plan[];
   activePlan: Plan | null;
   onSwitchPlan: (p: Plan) => void;
@@ -345,22 +341,14 @@ function ProgressRail({
         </div>
       )}
 
-      <div className="ml-auto flex items-center gap-1.5 flex-none">
-        {!isDirect && stage === "execute" ? (
+      {!isDirect && stage === "execute" && (
+        <div className="ml-auto flex items-center gap-1.5 flex-none">
           <span className="flex items-center gap-1.5 text-[11px] text-amber-700 px-2 py-1 bg-amber-50 border border-amber-200 rounded-md">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             Running…
           </span>
-        ) : !isDirect && (
-          <button
-            onClick={stage === "result" ? onRerun : onExecute}
-            disabled={!canExecute && stage !== "result"}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-gray-300 flex items-center gap-1 shadow-sm"
-          >
-            Run <I.Arrow className="w-3 h-3" />
-          </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -854,6 +842,7 @@ function AssistantPlanTurn({
   agentStates, customAgents, subagentConfigs,
   onUpdateCustom, onUpdateSub,
   onViewGraph, locked,
+  isLatestPlan, stage, isExecuting, canRun, onRun,
 }: {
   content: string;
   plan: Plan;
@@ -865,6 +854,11 @@ function AssistantPlanTurn({
   onUpdateSub: (id: string, u: Partial<SubagentConfig>) => void;
   onViewGraph: () => void;
   locked: boolean;
+  isLatestPlan: boolean;
+  stage: "plan" | "execute" | "result";
+  isExecuting: boolean;
+  canRun: boolean;
+  onRun: () => void;
 }) {
   const agents = plan.graph.agents;
   const isDirect = !!plan.graph.direct_solution;
@@ -985,6 +979,42 @@ function AssistantPlanTurn({
                 )}
               </div>
             )}
+
+            {isLatestPlan && (
+              isExecuting ? (
+                <div className="border-t bg-amber-50/40 px-3 py-2.5 flex items-center gap-2 text-[12px] text-amber-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  <span className="font-medium">Running plan…</span>
+                  <span className="text-amber-700/70">You can queue revisions in the chat below; they'll apply after this run.</span>
+                </div>
+              ) : stage === "plan" ? (
+                <div className="border-t bg-gray-50/60 px-3 py-3 flex flex-wrap items-center gap-3">
+                  <div className="text-xs text-gray-700 leading-snug min-w-0 flex-1">
+                    Ready to run this plan? Click <span className="font-medium text-gray-900">Run plan</span>, or describe a change in the chat below to revise it.
+                  </div>
+                  <button
+                    onClick={onRun}
+                    disabled={!canRun}
+                    className="px-3 py-1.5 text-xs font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-gray-300 flex items-center gap-1 shadow-sm flex-none"
+                  >
+                    Run plan <I.Arrow className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : stage === "result" ? (
+                <div className="border-t bg-gray-50/60 px-3 py-2.5 flex flex-wrap items-center gap-3">
+                  <div className="text-xs text-gray-500 leading-snug min-w-0 flex-1">
+                    Plan finished. Re-run with the same configuration, or send a revision below.
+                  </div>
+                  <button
+                    onClick={onRun}
+                    disabled={!canRun}
+                    className="px-2.5 py-1 text-xs font-medium rounded-md border bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1 flex-none"
+                  >
+                    <I.Refresh className="w-3 h-3" /> Re-run plan
+                  </button>
+                </div>
+              ) : null
+            )}
           </div>
         )}
       </div>
@@ -1064,6 +1094,7 @@ function ChatSpine({
   onUpdateCustom, onUpdateSub,
   onRerun, onCopy,
   onExpandGraph,
+  stage, canRun, onRun,
 }: {
   messages: ChatMessage[];
   agentStates: Record<string, AgentState>;
@@ -1076,6 +1107,9 @@ function ChatSpine({
   onRerun: () => void;
   onCopy: () => void;
   onExpandGraph: () => void;
+  stage: "plan" | "execute" | "result";
+  canRun: boolean;
+  onRun: () => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -1111,6 +1145,11 @@ function ChatSpine({
                 onUpdateSub={onUpdateSub}
                 onViewGraph={onExpandGraph}
                 locked={isLatestPlan && isExecuting}
+                isLatestPlan={isLatestPlan}
+                stage={stage}
+                isExecuting={isLatestPlan && isExecuting}
+                canRun={canRun || stage === "result"}
+                onRun={onRun}
               />
             ) : msg.isAnswer ? (
               <AssistantAnswerTurn
@@ -1457,9 +1496,6 @@ export default function App() {
                 agentStates={agentStates}
                 isLoading={isLoading || isRefining}
                 isDirect={!!plan?.graph.direct_solution}
-                canExecute={canExecute}
-                onExecute={executePlan}
-                onRerun={executePlan}
                 planHistory={planHistory}
                 activePlan={plan}
                 onSwitchPlan={switchToPlan}
@@ -1476,6 +1512,9 @@ export default function App() {
                 onRerun={executePlan}
                 onCopy={handleCopy}
                 onExpandGraph={() => setExpandedGraph(true)}
+                stage={stageKey}
+                canRun={canExecute}
+                onRun={executePlan}
               />
               <Composer
                 value={chatInput}
