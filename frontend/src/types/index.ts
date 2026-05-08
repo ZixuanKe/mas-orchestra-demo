@@ -114,3 +114,20 @@ export interface ChatMessage {
   plan?: Plan;
   isAnswer?: boolean;
 }
+
+export interface ShareSnapshot {
+  problem: string;
+  dataset?: Dataset | null;
+  dom?: DomLevel | null;
+  subagent_model?: SubagentModel | null;
+  expected_answer?: string | null;
+  plan?: Plan | null;
+  graph?: Graph | null;
+  agent_states?: Record<string, AgentState>;
+  final_answer?: string | null;
+  chat_messages?: ChatMessage[];
+  custom_agents?: CustomAgentConfig[];
+  subagent_configs?: Record<string, SubagentConfig>;
+  title?: string | null;
+  created_at?: number;
+}

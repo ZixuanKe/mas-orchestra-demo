@@ -4,10 +4,13 @@ load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 
 import asyncio
 import json
+import os
 import re
-from fastapi import FastAPI
+import secrets
+import time
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 # from slowapi import Limiter, _rate_limit_exceeded_handler
 # from slowapi.errors import RateLimitExceeded
@@ -196,6 +199,119 @@ async def dataset_endpoint(name: str, page: int = 0, page_size: int = 10):
     total = len(samples)
     start = page * page_size
     return {"total": total, "page": page, "page_size": page_size, "samples": samples[start: start + page_size]}
+
+
+SHARES_DIR = Path(__file__).parent.parent / "data" / "shares"
+SHARES_DIR.mkdir(parents=True, exist_ok=True)
+# Bound a single share payload to keep the file store sane (~2 MB JSON).
+MAX_SHARE_BYTES = 2 * 1024 * 1024
+# A loose upper bound on stored shares to avoid unbounded growth on the demo box.
+MAX_SHARES_ON_DISK = 10_000
+# Allowed share-id alphabet for path safety.
+_SHARE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
+
+
+def _new_share_id() -> str:
+    # 10 chars of url-safe base64 ≈ 60 bits, plenty for non-secret share IDs.
+    return secrets.token_urlsafe(8)[:10]
+
+
+class ShareRequest(BaseModel):
+    """A self-contained snapshot of a conversation that can be replayed read-only."""
+
+    problem: str
+    dataset: str | None = None
+    dom: str | None = None
+    subagent_model: str | None = None
+    expected_answer: str | None = None
+    plan: dict | None = None
+    graph: dict | None = None
+    agent_states: dict = Field(default_factory=dict)
+    final_answer: str | None = None
+    chat_messages: list[dict] = Field(default_factory=list)
+    custom_agents: list[dict] = Field(default_factory=list)
+    subagent_configs: dict = Field(default_factory=dict)
+    title: str | None = None
+
+
+class ShareResponse(BaseModel):
+    id: str
+    url: str
+    created_at: float
+
+
+def _public_base_url(req: Request) -> str:
+    """Resolve the externally-reachable base URL for share links.
+
+    Priority:
+      1. PUBLIC_BASE_URL env var (e.g. the cloudflared / ngrok hostname).
+      2. X-Forwarded-Host + X-Forwarded-Proto (set by reverse proxies/tunnels).
+      3. The Origin/Referer header from the browser request.
+      4. The raw request URL (likely localhost — last resort).
+    """
+    env_url = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if env_url:
+        return env_url
+
+    fwd_host = req.headers.get("x-forwarded-host")
+    if fwd_host:
+        proto = req.headers.get("x-forwarded-proto", "https").split(",")[0].strip()
+        return f"{proto}://{fwd_host.split(',')[0].strip()}"
+
+    origin = req.headers.get("origin")
+    if origin:
+        return origin.rstrip("/")
+
+    referer = req.headers.get("referer")
+    if referer:
+        # Strip path/query — keep scheme+host[:port]
+        m = re.match(r"^(https?://[^/]+)", referer)
+        if m:
+            return m.group(1)
+
+    return f"{req.url.scheme}://{req.url.netloc}"
+
+
+@app.post("/share")
+async def create_share(req: ShareRequest, request: Request) -> ShareResponse:
+    payload = req.model_dump()
+    payload["created_at"] = time.time()
+
+    encoded = json.dumps(payload, ensure_ascii=False)
+    if len(encoded.encode("utf-8")) > MAX_SHARE_BYTES:
+        raise HTTPException(status_code=413, detail="Share payload too large")
+
+    # Best-effort cap on total shares; on demo box we just refuse new writes if exceeded.
+    try:
+        existing = sum(1 for _ in SHARES_DIR.glob("*.json"))
+        if existing >= MAX_SHARES_ON_DISK:
+            raise HTTPException(status_code=507, detail="Share storage full; please try again later")
+    except OSError:
+        pass
+
+    base = _public_base_url(request)
+
+    # Generate an unused id (collision is astronomically unlikely but be safe).
+    for _ in range(5):
+        sid = _new_share_id()
+        path = SHARES_DIR / f"{sid}.json"
+        if not path.exists():
+            path.write_text(encoded, encoding="utf-8")
+            return ShareResponse(id=sid, url=f"{base}/?share={sid}", created_at=payload["created_at"])
+    raise HTTPException(status_code=500, detail="Could not allocate share id")
+
+
+@app.get("/share/{share_id}")
+async def get_share(share_id: str) -> dict:
+    if not _SHARE_ID_RE.match(share_id):
+        raise HTTPException(status_code=400, detail="Invalid share id")
+    path = SHARES_DIR / f"{share_id}.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Share not found")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load share: {e}") from e
 
 
 @app.get("/health")

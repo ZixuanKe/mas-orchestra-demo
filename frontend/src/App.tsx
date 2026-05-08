@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useOrchestration } from "./hooks/useOrchestration";
 import { GraphViewer } from "./components/GraphViewer";
 import { DatasetPicker } from "./components/DatasetPicker";
+import { ShareModal } from "./components/ShareModal";
 import type { Dataset, DomLevel, Mode, SubagentModel, CustomAgentConfig, SubagentConfig, Agent, AgentType, AgentState, Plan, ChatMessage } from "./types";
 import { AGENT_POOL, DATASETS, DOM_OPTIONS, MODES, SUBAGENT_MODELS } from "./types";
 
@@ -25,6 +26,8 @@ const I = {
   Paper: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>,
   Globe: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>,
   Sparkle: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 2l2 7 7 2-7 2-2 7-2-7-7-2 7-2z"/></svg>,
+  Share: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v14"/></svg>,
+  Eye: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>,
 };
 
 /* ────────────────────────────────────────────────────────────────
@@ -47,11 +50,19 @@ function TopBar({
   onToggleRight,
   onReset,
   showGraphToggle,
+  canShare,
+  onShare,
+  isShared,
+  onExitShared,
 }: {
   onToggleLeft: () => void;
   onToggleRight: () => void;
   onReset: () => void;
   showGraphToggle: boolean;
+  canShare: boolean;
+  onShare: () => void;
+  isShared: boolean;
+  onExitShared: () => void;
 }) {
   return (
     <header className="h-14 border-b bg-white flex items-center px-3 gap-3 flex-none">
@@ -76,7 +87,32 @@ function TopBar({
         </div>
       </button>
 
+      {isShared && (
+        <span className="ml-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
+          <I.Eye className="w-3 h-3" />
+          Shared view · read-only
+        </span>
+      )}
+
       <div className="ml-auto flex items-center gap-1.5">
+        {isShared ? (
+          <button
+            onClick={onExitShared}
+            className="text-xs text-gray-700 hover:text-gray-900 px-2.5 py-1.5 rounded-md border border-gray-200 hover:bg-gray-50 font-medium"
+          >
+            Try MAS-Orchestra →
+          </button>
+        ) : (
+          canShare && (
+            <button
+              onClick={onShare}
+              className="flex items-center gap-1.5 text-xs text-white bg-gradient-to-br from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-3 py-1.5 rounded-md shadow-sm font-medium"
+              title="Share this conversation"
+            >
+              <I.Share className="w-3.5 h-3.5" /> Share
+            </button>
+          )
+        )}
         <a href="https://github.com/SalesforceAIResearch/MAS-Orchestra" target="_blank" rel="noopener noreferrer"
           className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 px-2.5 py-1.5 rounded-md hover:bg-gray-100">
           <I.GitHub className="w-3.5 h-3.5" /> GitHub
@@ -1095,6 +1131,7 @@ function ChatSpine({
   onRerun, onCopy,
   onExpandGraph,
   stage, canRun, onRun,
+  readOnly,
 }: {
   messages: ChatMessage[];
   agentStates: Record<string, AgentState>;
@@ -1110,6 +1147,7 @@ function ChatSpine({
   stage: "plan" | "execute" | "result";
   canRun: boolean;
   onRun: () => void;
+  readOnly?: boolean;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -1144,8 +1182,8 @@ function ChatSpine({
                 onUpdateCustom={onUpdateCustom}
                 onUpdateSub={onUpdateSub}
                 onViewGraph={onExpandGraph}
-                locked={isLatestPlan && isExecuting}
-                isLatestPlan={isLatestPlan}
+                locked={(isLatestPlan && isExecuting) || !!readOnly}
+                isLatestPlan={isLatestPlan && !readOnly}
                 stage={stage}
                 isExecuting={isLatestPlan && isExecuting}
                 canRun={canRun || stage === "result"}
@@ -1156,7 +1194,7 @@ function ChatSpine({
                 answer={msg.content}
                 onCopy={onCopy}
                 onRerun={onRerun}
-                isExecuting={isExecuting}
+                isExecuting={isExecuting || !!readOnly}
                 versionLabel={`v${answerVersion}`}
                 isLatest={isLatestAnswer}
               />
@@ -1383,12 +1421,13 @@ function RightSidebar({
 export default function App() {
   const orch = useOrchestration();
   const {
-    stage, plan, graph, agentStates, finalAnswer, error, isLoading, isRefining,
+    stage, plan, graph, agentStates, finalAnswer, problem: orchProblem, error, isLoading, isRefining,
     subagentModel, chatMessages, undoStack, redoStack, customAgents, subagentConfigs,
-    pendingQueue,
+    pendingQueue, isShared,
     generatePlan, executePlan, cancelExecution, cancelRefine, undoPlan, redoPlan,
     queueRefine, editQueued, removeQueued,
     switchToPlan, updateCustomAgent, updateSubagentConfig, setSubagentModel, reset,
+    createShare, exitSharedMode,
   } = orch;
 
   const planHistory: Plan[] = chatMessages.filter(m => m.plan).map(m => m.plan!);
@@ -1398,6 +1437,48 @@ export default function App() {
   const [input, setInput] = useState({ problem: "", expected: "", mode: "custom" as Mode, dom: "high" as DomLevel });
   const [chatInput, setChatInput] = useState("");
   const [expandedGraph, setExpandedGraph] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+
+  // Resizable right (graph) panel — persisted across reloads.
+  const RIGHT_DEFAULT = 340;
+  const RIGHT_MIN = 240;
+  const RIGHT_MAX = 900;
+  const [rightWidth, setRightWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return RIGHT_DEFAULT;
+    const stored = parseInt(window.localStorage.getItem("mas-orchestra:rightWidth") || "", 10);
+    return Number.isFinite(stored) && stored >= RIGHT_MIN && stored <= RIGHT_MAX ? stored : RIGHT_DEFAULT;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("mas-orchestra:rightWidth", String(rightWidth));
+  }, [rightWidth]);
+  const startResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = rightWidth;
+    setIsResizing(true);
+    const onMove = (ev: PointerEvent) => {
+      // Drag left → grow the right panel; clamp to comfortable bounds.
+      const delta = startX - ev.clientX;
+      const cap = Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, window.innerWidth - 320));
+      setRightWidth(Math.min(cap, Math.max(RIGHT_MIN, startW + delta)));
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      setIsResizing(false);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  }, [rightWidth]);
+
+  // In shared mode the left settings sidebar would be confusing — collapse it.
+  useEffect(() => { if (isShared) { setLeftOpen(false); } }, [isShared]);
 
   const hasConversation = plan !== null;
   const stageKey: "plan" | "execute" | "result" =
@@ -1431,7 +1512,8 @@ export default function App() {
     setChatInput("");
   };
 
-  const canExecute = !!plan && !isLoading && !isRefining && stage === "plan";
+  const canExecute = !isShared && !!plan && !isLoading && !isRefining && stage === "plan";
+  const canShare = hasConversation && !isLoading;
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -1440,6 +1522,21 @@ export default function App() {
         onToggleRight={() => setRightOpen(v => !v)}
         onReset={handleReset}
         showGraphToggle={hasConversation && !!graph && !expandedGraph}
+        canShare={canShare}
+        onShare={() => setShareOpen(true)}
+        isShared={isShared}
+        onExitShared={exitSharedMode}
+      />
+
+      <ShareModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        onCreate={createShare}
+        summary={{
+          problem: orchProblem,
+          agentCount: plan?.graph.agents.length ?? 0,
+          hasAnswer: !!finalAnswer,
+        }}
       />
 
       <div className="flex flex-1 min-h-0">
@@ -1464,7 +1561,14 @@ export default function App() {
             </div>
           )}
 
-          {!hasConversation ? (
+          {isShared && !hasConversation && isLoading ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="flex items-center gap-3 text-sm text-gray-500">
+                <span className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                Loading shared conversation…
+              </div>
+            </div>
+          ) : !hasConversation ? (
             <EmptyState
               mode={input.mode}
               dom={input.dom} onDomChange={d => setInput(s => ({ ...s, dom: d }))}
@@ -1515,26 +1619,70 @@ export default function App() {
                 stage={stageKey}
                 canRun={canExecute}
                 onRun={executePlan}
+                readOnly={isShared}
               />
-              <Composer
-                value={chatInput}
-                onChange={setChatInput}
-                onSubmit={handleRefine}
-                disabled={isRefining || (stage === "execute" && isLoading)}
-                subagentModel={subagentModel}
-                onCancel={isRefining ? cancelRefine : cancelExecution}
-                canCancel={isRefining || (stage === "execute" && isLoading)}
-                pendingQueue={pendingQueue}
-                onEditQueued={editQueued}
-                onRemoveQueued={removeQueued}
-              />
+              {!isShared && (
+                <Composer
+                  value={chatInput}
+                  onChange={setChatInput}
+                  onSubmit={handleRefine}
+                  disabled={isRefining || (stage === "execute" && isLoading)}
+                  subagentModel={subagentModel}
+                  onCancel={isRefining ? cancelRefine : cancelExecution}
+                  canCancel={isRefining || (stage === "execute" && isLoading)}
+                  pendingQueue={pendingQueue}
+                  onEditQueued={editQueued}
+                  onRemoveQueued={removeQueued}
+                />
+              )}
+              {isShared && (
+                <div className="border-t bg-gradient-to-r from-blue-50/60 via-white to-indigo-50/60 px-5 py-3 flex items-center gap-3 text-xs text-gray-600 flex-none">
+                  <I.Eye className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>You're viewing a shared conversation. Want to design your own?</span>
+                  <button
+                    onClick={exitSharedMode}
+                    className="ml-auto px-3 py-1.5 text-xs font-medium rounded-md bg-gradient-to-br from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-sm"
+                  >
+                    Try MAS-Orchestra
+                  </button>
+                </div>
+              )}
             </>
           )}
         </main>
 
+        {/* Drag handle between main and graph panel — only visible when the
+            graph is shown and the panel is open. Drag to resize, double-click
+            to reset to the default width. */}
+        {hasConversation && graph && !expandedGraph && rightOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize graph panel"
+            onPointerDown={startResize}
+            onDoubleClick={() => setRightWidth(RIGHT_DEFAULT)}
+            title="Drag to resize · Double-click to reset"
+            className={`group relative flex-none w-1 cursor-col-resize select-none ${isResizing ? "" : "transition-colors duration-150"}`}
+          >
+            {/* The visible hairline + a wider invisible hit area for easy grabbing. */}
+            <div className={`absolute inset-y-0 left-0 right-0 ${isResizing ? "bg-blue-400" : "bg-gray-200 group-hover:bg-blue-300"}`} />
+            <div className="absolute inset-y-0 -left-1.5 -right-1.5" />
+            {/* Centered grip dots on hover/drag for affordance. */}
+            <div className={`pointer-events-none absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 flex flex-col gap-0.5 ${isResizing ? "opacity-100" : "opacity-0 group-hover:opacity-100 transition-opacity"}`}>
+              <span className="w-0.5 h-0.5 rounded-full bg-white" />
+              <span className="w-0.5 h-0.5 rounded-full bg-white" />
+              <span className="w-0.5 h-0.5 rounded-full bg-white" />
+              <span className="w-0.5 h-0.5 rounded-full bg-white" />
+            </div>
+          </div>
+        )}
+
         {/* Right sidebar (hidden in expanded graph mode to avoid duplicate graphs) */}
         {hasConversation && graph && !expandedGraph && (
-          <aside className={`border-l bg-white overflow-hidden transition-[width] duration-200 flex-none ${rightOpen ? "w-[340px]" : "w-0"}`}>
+          <aside
+            className={`border-l bg-white overflow-hidden flex-none ${isResizing ? "" : "transition-[width] duration-200"}`}
+            style={{ width: rightOpen ? rightWidth : 0 }}
+          >
             <RightSidebar
               graph={graph}
               agentStates={agentStates}

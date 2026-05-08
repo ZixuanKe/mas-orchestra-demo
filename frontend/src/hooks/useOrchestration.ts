@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { Graph, AgentState, Dataset, DomLevel, Plan, Stage, SubagentModel, CustomAgentConfig, SubagentConfig, ChatMessage } from "../types";
+import type { Graph, AgentState, Dataset, DomLevel, Plan, Stage, SubagentModel, CustomAgentConfig, SubagentConfig, ChatMessage, ShareSnapshot } from "../types";
 import { track } from "../analytics";
 
 interface State {
@@ -368,6 +368,85 @@ export function useOrchestration() {
   const goToStage = useCallback((stage: Stage) => setState(s => ({ ...s, stage, error: null })), []);
   const reset = useCallback(() => { setState(initial); setChatMessages([]); setUndoStack([]); setRedoStack([]); setSubagentConfigs({}); setPendingQueue([]); }, []);
 
+  const createShare = useCallback(async (): Promise<{ id: string; url: string } | null> => {
+    const cur = stateRef.current;
+    const snapshot: ShareSnapshot = {
+      problem: cur.problem,
+      dataset: cur.dataset,
+      dom: cur.dom,
+      subagent_model: cur.subagentModel,
+      expected_answer: cur.expectedAnswer || null,
+      plan: cur.plan,
+      graph: cur.graph,
+      agent_states: cur.agentStates,
+      final_answer: cur.finalAnswer,
+      chat_messages: msgsRef.current,
+      custom_agents: customAgents,
+      subagent_configs: subagentConfigs,
+    };
+    try {
+      const res = await fetch("/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot),
+      });
+      if (!res.ok) {
+        let detail = `${res.status}`;
+        try { detail = (await res.json()).detail || detail; } catch { /* ignore */ }
+        throw new Error(`Share failed: ${detail}`);
+      }
+      const data: { id: string; url?: string; created_at: number } = await res.json();
+      // Trust the backend-computed URL (it knows the public hostname when behind
+      // a tunnel). Fall back to the current origin only if the backend didn't
+      // provide one, so dev/local setups still work.
+      const url = data.url || `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(data.id)}`;
+      track("share_created", { has_plan: !!cur.plan, has_answer: !!cur.finalAnswer, agent_count: cur.plan?.graph.agents.length ?? 0 });
+      return { id: data.id, url };
+    } catch (err) {
+      setState(s => ({ ...s, error: String(err) }));
+      return null;
+    }
+  }, [customAgents, subagentConfigs]);
+
+  const loadShare = useCallback(async (shareId: string): Promise<boolean> => {
+    setState(s => ({ ...s, isLoading: true, error: null }));
+    try {
+      const res = await fetch(`/share/${encodeURIComponent(shareId)}`);
+      if (!res.ok) {
+        let detail = `${res.status}`;
+        try { detail = (await res.json()).detail || detail; } catch { /* ignore */ }
+        throw new Error(`Could not load shared conversation: ${detail}`);
+      }
+      const snap: ShareSnapshot = await res.json();
+      setCustomAgents(snap.custom_agents ?? []);
+      setSubagentConfigs(snap.subagent_configs ?? {});
+      setChatMessages(snap.chat_messages ?? []);
+      setUndoStack([]);
+      setRedoStack([]);
+      setPendingQueue([]);
+      setState(s => ({
+        ...s,
+        problem: snap.problem,
+        dataset: (snap.dataset as Dataset | null) ?? null,
+        dom: (snap.dom as DomLevel | undefined) ?? "high",
+        subagentModel: (snap.subagent_model as SubagentModel | undefined) ?? s.subagentModel,
+        expectedAnswer: snap.expected_answer ?? "",
+        plan: snap.plan ?? null,
+        graph: snap.graph ?? null,
+        agentStates: snap.agent_states ?? {},
+        finalAnswer: snap.final_answer ?? null,
+        stage: snap.final_answer ? "result" : (snap.plan ? "plan" : "input"),
+        isLoading: false,
+        isRefining: false,
+      }));
+      track("share_loaded", { id: shareId });
+      return true;
+    } catch (err) {
+      setState(s => ({ ...s, error: String(err), isLoading: false }));
+      return false;
+    }
+  }, []);
+
   const queueRefine = useCallback((text: string) => {
     const v = text.trim();
     if (!v) return;
@@ -393,5 +472,36 @@ export function useOrchestration() {
     refineRef.current(next);
   }, [pendingQueue, state.isLoading, state.isRefining, state.stage, state.plan]);
 
-  return { ...state, customAgents, subagentConfigs, chatMessages, undoStack, redoStack, pendingQueue, generatePlan, executePlan, cancelExecution, refinePlan, cancelRefine, queueRefine, editQueued, removeQueued, undoPlan, redoPlan, switchToPlan, designAgent, removeCustomAgent, updateCustomAgent, updateSubagentConfig, setSubagentModel, goToStage, reset };
+  // Read-only "shared conversation" mode is set when the page loads with ?share=<id>.
+  const [isShared, setIsShared] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).has("share");
+  });
+  const loadShareRef = useRef(loadShare);
+  loadShareRef.current = loadShare;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sid = new URLSearchParams(window.location.search).get("share");
+    if (!sid) return;
+    setIsShared(true);
+    loadShareRef.current(sid);
+  }, []);
+
+  const exitSharedMode = useCallback(() => {
+    setIsShared(false);
+    setState(initial);
+    setChatMessages([]);
+    setUndoStack([]);
+    setRedoStack([]);
+    setSubagentConfigs({});
+    setCustomAgents([]);
+    setPendingQueue([]);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("share");
+      window.history.replaceState({}, "", url.pathname + (url.search || ""));
+    }
+  }, []);
+
+  return { ...state, customAgents, subagentConfigs, chatMessages, undoStack, redoStack, pendingQueue, isShared, generatePlan, executePlan, cancelExecution, refinePlan, cancelRefine, queueRefine, editQueued, removeQueued, undoPlan, redoPlan, switchToPlan, designAgent, removeCustomAgent, updateCustomAgent, updateSubagentConfig, setSubagentModel, goToStage, reset, createShare, loadShare, exitSharedMode };
 }
