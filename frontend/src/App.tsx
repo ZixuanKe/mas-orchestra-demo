@@ -1389,7 +1389,7 @@ function RightSidebar({
   onUndo: () => void; onRedo: () => void; canUndo: boolean; canRedo: boolean;
 }) {
   return (
-    <div className="h-full flex flex-col w-[340px]">
+    <div className="h-full w-full flex flex-col">
       <div className="h-9 border-b flex items-center px-3 text-xs text-gray-500 gap-1 flex-none">
         <span className="font-medium text-gray-700">Graph</span>
         <span className="text-gray-400">· {graph.agents.length} agents</span>
