@@ -1,10 +1,12 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useOrchestration } from "./hooks/useOrchestration";
 import { GraphViewer } from "./components/GraphViewer";
 import { DatasetPicker } from "./components/DatasetPicker";
 import { ShareModal } from "./components/ShareModal";
+import { EnterprisePicker } from "./components/EnterprisePicker";
+import { SandboxPanel } from "./components/SandboxPanel";
 import type { Dataset, DomLevel, Mode, SubagentModel, CustomAgentConfig, SubagentConfig, Agent, AgentType, AgentState, Plan, ChatMessage } from "./types";
-import { AGENT_POOL, DATASETS, DOM_OPTIONS, MODES, SUBAGENT_MODELS } from "./types";
+import { AGENT_POOL, ENTERPRISE_AGENT_POOL, DATASETS, DOM_OPTIONS, MODES, SUBAGENT_MODELS, displayAgentType, toolToAgentLabel } from "./types";
 
 /* ────────────────────────────────────────────────────────────────
    Icons (inline SVGs, keep bundle tiny)
@@ -40,6 +42,8 @@ const TYPE_COLOR: Record<AgentType, string> = {
   ReflexionAgent: "#10b981",
   WebSearchAgent: "#ef4444",
   CustomAgent: "#ec4899",
+  MCPAgent: "#0ea5e9",                  // sky-500 — enterprise per-tool agent
+  EnterpriseExecutorAgent: "#6366f1",   // indigo-500 — enterprise summarizer
 };
 
 /* ────────────────────────────────────────────────────────────────
@@ -227,18 +231,30 @@ function LeftSidebar({
   dom, onDomChange,
   subagentModel, onSubagentChange,
   disabled,
+  enterpriseAgents,
 }: {
   mode: Mode; onModeChange: (m: Mode) => void;
   dom: DomLevel; onDomChange: (d: DomLevel) => void;
   subagentModel: SubagentModel; onSubagentChange: (m: SubagentModel) => void;
   disabled: boolean;
+  /** Custom legend rows for enterprise mode — when present, replaces the
+   *  generic ``ENTERPRISE_AGENT_POOL`` placeholder. Lets the sidebar show
+   *  the actual per-tool agents (e.g. ``CreateCalendarAgent``) for the
+   *  selected task / live plan rather than a single anonymous "MCPAgent". */
+  enterpriseAgents?: { type: string; description: string; color: string }[];
 }) {
+  const enterpriseLegend = (enterpriseAgents && enterpriseAgents.length > 0)
+    ? enterpriseAgents
+    : ENTERPRISE_AGENT_POOL.map(a => ({
+        ...a,
+        color: TYPE_COLOR[a.type as AgentType] || "#9ca3af",
+      }));
   return (
     <div className="h-full w-60 p-4 space-y-5 overflow-y-auto">
       <div>
-        <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Mode</div>
+        <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Reasoning</div>
         <div className="space-y-1">
-          {MODES.map(m => (
+          {MODES.filter(m => m.value !== "enterprise").map(m => (
             <label key={m.value} className={`flex items-center gap-2 text-sm ${disabled ? "opacity-50" : "cursor-pointer"}`}>
               <input
                 type="radio"
@@ -254,7 +270,25 @@ function LeftSidebar({
         </div>
       </div>
 
-      {mode === "custom" && (
+      <div>
+        <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Enterprise</div>
+        <div className="space-y-1">
+          <label className={`flex items-center gap-2 text-sm ${disabled ? "opacity-50" : "cursor-pointer"}`}>
+            <input
+              type="radio"
+              name="mode"
+              checked={mode === "enterprise"}
+              onChange={() => !disabled && onModeChange("enterprise")}
+              disabled={disabled}
+              className="accent-blue-600"
+            />
+            <span className="text-gray-700">EnterpriseOps tasks</span>
+          </label>
+          <div className="text-[11px] text-gray-400 ml-5">Tool-using agents on a live sandbox.</div>
+        </div>
+      </div>
+
+      {(mode === "custom" || mode === "enterprise") && (
         <div>
           <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Degree of MAS</div>
           <div className="inline-flex flex-wrap gap-1 p-0.5 rounded-md border bg-white">
@@ -272,6 +306,11 @@ function LeftSidebar({
               </button>
             ))}
           </div>
+          {mode === "enterprise" && (
+            <div className="mt-1 text-[10.5px] text-gray-400 leading-snug">
+              Controls how elaborate the MCPAgent DAG is (low: minimal mutations, extensive: bracket every write with reads).
+            </div>
+          )}
         </div>
       )}
 
@@ -284,21 +323,31 @@ function LeftSidebar({
         />
       </div>
 
-      <details className="group">
+      <details className="group" open={mode === "enterprise"}>
         <summary className="flex items-center justify-between cursor-pointer list-none text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2 select-none">
-          <span>Agent types</span>
+          <span>Agent types {mode === "enterprise" ? "(enterprise)" : ""}</span>
           <I.Chev className="w-3 h-3 text-gray-400 transition-transform group-open:rotate-90" />
         </summary>
         <div className="space-y-1.5 mt-1">
-          {AGENT_POOL.map(a => (
-            <div key={a.type} className="text-[11px]">
-              <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full flex-none" style={{ background: TYPE_COLOR[a.type as AgentType] || "#9ca3af" }} />
-                <span className="font-medium text-gray-700">{a.type.replace("Agent", "")}</span>
-              </div>
-              <div className="text-[10.5px] text-gray-400 leading-snug ml-3.5 mt-0.5">{a.description}</div>
-            </div>
-          ))}
+          {mode === "enterprise"
+            ? enterpriseLegend.map(a => (
+                <div key={a.type} className="text-[11px]">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full flex-none" style={{ background: a.color }} />
+                    <span className="font-medium text-gray-700">{a.type.replace(/Agent$/, "")}</span>
+                  </div>
+                  <div className="text-[10.5px] text-gray-400 leading-snug ml-3.5 mt-0.5">{a.description}</div>
+                </div>
+              ))
+            : AGENT_POOL.map(a => (
+                <div key={a.type} className="text-[11px]">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full flex-none" style={{ background: TYPE_COLOR[a.type as AgentType] || "#9ca3af" }} />
+                    <span className="font-medium text-gray-700">{a.type.replace("Agent", "")}</span>
+                  </div>
+                  <div className="text-[10.5px] text-gray-400 leading-snug ml-3.5 mt-0.5">{a.description}</div>
+                </div>
+              ))}
         </div>
       </details>
     </div>
@@ -402,7 +451,7 @@ function EmptyState({
   mode, dom, onDomChange,
   problem, onProblemChange,
   expected, onExpectedChange,
-  onSubmitCustom, onSubmitDataset,
+  onSubmitCustom, onSubmitDataset, onSubmitEnterprise, onPreviewEnterprise,
   isLoading,
 }: {
   mode: Mode; dom: DomLevel; onDomChange: (d: DomLevel) => void;
@@ -410,26 +459,37 @@ function EmptyState({
   expected: string; onExpectedChange: (s: string) => void;
   onSubmitCustom: () => void;
   onSubmitDataset: (q: string, a: string) => void;
+  onSubmitEnterprise: (task: import("./types").EnterpriseTask, enabledTools: string[], dom: DomLevel) => void;
+  onPreviewEnterprise: (task: import("./types").EnterpriseTask) => void;
   isLoading: boolean;
 }) {
   const canSubmit = problem.trim().length > 0 && !isLoading;
-  const isDataset = mode !== "custom";
+  const isDataset = mode !== "custom" && mode !== "enterprise";
+  const isEnterprise = mode === "enterprise";
 
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="min-h-full flex flex-col items-center justify-center px-5 py-10">
         <div className="max-w-2xl w-full text-center mb-6">
           <h1 className="text-3xl font-semibold text-gray-900 tracking-tight mb-2">
-            {isDataset ? "Pick a question to solve" : "What should Orchestra solve?"}
+            {isEnterprise ? "Pick an EnterpriseOps task"
+              : isDataset ? "Pick a question to solve"
+              : "What should Orchestra solve?"}
           </h1>
           <p className="text-sm text-gray-500">
-            {isDataset
+            {isEnterprise
+              ? "Orchestra plans a DAG of tool-using agents and runs them against a live sandbox. Watch the database change in the panel on the right."
+              : isDataset
               ? "Orchestra designs a multi-agent plan for the selected problem, then lets you refine it in chat."
               : "Describe a problem. Orchestra designs a multi-agent plan, executes it, and lets you refine in chat."}
           </p>
         </div>
 
-        {!isDataset ? (
+        {isEnterprise ? (
+          <div className="max-w-2xl w-full">
+            <EnterprisePicker dom={dom} onDomChange={onDomChange} isLoading={isLoading} onPreview={onPreviewEnterprise} onSubmit={onSubmitEnterprise} />
+          </div>
+        ) : !isDataset ? (
           <div className="max-w-2xl w-full">
             <div className="rounded-2xl border border-gray-300 bg-white shadow-sm focus-within:border-gray-400 transition-colors relative">
               <textarea
@@ -605,7 +665,12 @@ function AgentToolCard({
       >
         <I.Chev className={`w-3 h-3 text-gray-400 transition-transform ${open ? "rotate-90" : ""}`} />
         <span className="font-mono text-[11px] text-gray-500">{agent.id}</span>
-        <span className="text-xs font-medium" style={{ color }}>{agent.type}</span>
+        <span className="text-xs font-medium" style={{ color }}>{displayAgentType(agent)}</span>
+        {agent.tool_name && agent.type === "MCPAgent" && (
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200" title="MCP tool wielded by this agent">
+            {agent.tool_name}
+          </span>
+        )}
         <span className="text-xs text-gray-500 truncate flex-1">{agent.description}</span>
         <StatusChip state={state} />
       </button>
@@ -1058,6 +1123,108 @@ function AssistantPlanTurn({
   );
 }
 
+/** Renders the structured result of a /enterprise/verify call. Each row
+ *  is one oracle check with its expected vs actual scalar, the underlying
+ *  SQL query (collapsible), and any backend error. */
+function VerifierTurn({ run }: { run: import("./types").VerifierRunResponse }) {
+  const allPassed = run.passed === run.total;
+  const headerCls = allPassed
+    ? "border-emerald-300 bg-emerald-50/60"
+    : "border-amber-300 bg-amber-50/60";
+  const headerText = allPassed ? "text-emerald-700" : "text-amber-700";
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="assistant" />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-gray-500 mb-1">Orchestra <span className="text-gray-300">·</span> verifier</div>
+        <div className={`rounded-lg border ${headerCls} overflow-hidden`}>
+          <div className="flex items-center gap-2 px-4 py-2.5">
+            <I.Check className={`w-4 h-4 ${headerText}`} />
+            <div className={`text-xs font-medium uppercase tracking-wide ${headerText}`}>
+              {allPassed ? "All checks passed" : "Some checks failed"}
+            </div>
+            <span className="ml-auto text-xs font-mono text-gray-700">
+              {run.passed} / {run.total}
+            </span>
+          </div>
+          <ul className="divide-y bg-white">
+            {run.results.map((r, idx) => (
+              <VerifierRow key={idx} r={r} />
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VerifierRow({ r }: { r: import("./types").VerifierResult }) {
+  const [open, setOpen] = useState(false);
+  const ok = r.passed;
+  const badgeCls = r.error
+    ? "bg-gray-400"
+    : ok ? "bg-emerald-500" : "bg-red-500";
+  const badgeText = r.error ? "ERR" : ok ? "PASS" : "FAIL";
+  return (
+    <li className="px-4 py-2">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-start gap-2.5 text-left"
+      >
+        <span className={`mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold text-white ${badgeCls}`}>{badgeText}</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm text-gray-800 font-medium truncate">{r.name}</div>
+          {r.description && <div className="text-[11px] text-gray-500 truncate">{r.description}</div>}
+        </div>
+        <I.Chev className={`w-3 h-3 mt-1 text-gray-400 transition-transform flex-none ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && (
+        <div className="mt-2 ml-[34px] space-y-1.5">
+          {r.error ? (
+            <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2 font-mono whitespace-pre-wrap">{r.error}</div>
+          ) : (
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="text-gray-500">expected</span>
+              <span className="font-mono px-1.5 py-0.5 rounded bg-gray-100 text-gray-800">{JSON.stringify(r.expected)}</span>
+              <span className="text-gray-400">·</span>
+              <span className="text-gray-500">actual</span>
+              <span className={`font-mono px-1.5 py-0.5 rounded ${ok ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>{JSON.stringify(r.actual)}</span>
+              <span className="text-[10px] text-gray-400 ml-1">({r.comparison})</span>
+            </div>
+          )}
+          <details className="text-[11px]">
+            <summary className="cursor-pointer text-gray-500 hover:text-gray-700">SQL</summary>
+            <pre className="mt-1 p-2 bg-gray-50 border border-gray-200 rounded text-[10.5px] font-mono text-gray-700 overflow-x-auto whitespace-pre-wrap">{r.query}</pre>
+          </details>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** Inline yellow banner turn — used when the planner backend degraded
+ *  to a fallback (e.g. vLLM unreachable or returned empty). Crucially
+ *  NOT shown as a fatal error: the conversation continues and the user
+ *  can still iterate, just knowing the displayed plan isn't what the
+ *  trained planner would have produced. */
+function AssistantWarningTurn({ content }: { content: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="assistant" />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-gray-500 mb-1">Orchestra <span className="text-gray-300">·</span> warning</div>
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 flex items-start gap-2">
+          <svg className="w-4 h-4 mt-0.5 text-amber-600 flex-none" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M8.485 3.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.88c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625l6.28-10.88zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+          </svg>
+          <div className="text-[12.5px] text-amber-900 leading-relaxed whitespace-pre-wrap">{content}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AssistantMessageTurn({ content }: { content: string }) {
   return (
     <div className="flex items-start gap-3">
@@ -1072,12 +1239,25 @@ function AssistantMessageTurn({ content }: { content: string }) {
 
 function AssistantAnswerTurn({
   answer, onCopy, onRerun, isExecuting, versionLabel, isLatest,
+  verifierCount, onRunVerifier, isVerifying, verifierResult,
 }: {
   answer: string;
   onCopy: () => void; onRerun: () => void;
   isExecuting: boolean;
   versionLabel: string;
   isLatest: boolean;
+  /** Number of oracle checks the enterprise task ships with. ``undefined``
+   *  for non-enterprise turns; ``0`` hides the verifier button. */
+  verifierCount?: number;
+  /** Triggers the user-initiated verifier run. The hook appends a new
+   *  assistant message with the structured results. */
+  onRunVerifier?: () => void;
+  isVerifying?: boolean;
+  /** Most recent verifier run that BELONGS to this answer turn (i.e.
+   *  appended into the chat after this answer). When ``null`` the button
+   *  is in its initial neutral state. When set, the button reflects the
+   *  pass/fail summary with a check / × icon and color. */
+  verifierResult?: import("./types").VerifierRunResponse | null;
 }) {
   const [open, setOpen] = useState(isLatest);
   useEffect(() => { setOpen(isLatest); }, [isLatest]);
@@ -1103,7 +1283,7 @@ function AssistantAnswerTurn({
           )}
         </div>
         {open && (
-          <div className="flex items-center gap-1.5 mt-2">
+          <div className="flex items-center gap-1.5 mt-2 flex-wrap">
             <button onClick={onRerun} disabled={isExecuting}
               className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border bg-white hover:bg-gray-50 disabled:opacity-50">
               <I.Refresh className="w-3 h-3" /> Re-run
@@ -1112,6 +1292,59 @@ function AssistantAnswerTurn({
               className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border bg-white hover:bg-gray-50">
               <I.Copy className="w-3 h-3" /> Copy
             </button>
+            {/* Verifier opt-in: shown only on the latest answer of an
+                enterprise run that ships oracle checks. The button posts to
+                /enterprise/verify which queries the post-run sandbox and
+                appends a structured VerifierTurn into the chat.
+                Visual states:
+                  - default (never run): neutral, matches Re-run/Copy. No icon.
+                  - verifying:           spinner.
+                  - all passed:          green check + "Verified (N/N)".
+                  - some failed:         red ✕ + "Verifier (P/N)". */}
+            {isLatest && (verifierCount ?? 0) > 0 && onRunVerifier && (() => {
+              const total = verifierResult?.total ?? verifierCount ?? 0;
+              const passed = verifierResult?.passed ?? 0;
+              const allOk = !!verifierResult && passed === total && total > 0;
+              const someFailed = !!verifierResult && passed < total;
+              const stateCls = isVerifying
+                ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                : allOk
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                  : someFailed
+                    ? "border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                    // Default neutral state — matches Re-run / Copy.
+                    : "bg-white hover:bg-gray-50";
+              return (
+                <button
+                  onClick={onRunVerifier}
+                  disabled={isExecuting || isVerifying}
+                  className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border disabled:opacity-60 ${stateCls}`}
+                  title={
+                    verifierResult
+                      ? `${passed}/${total} oracle checks passed. Click to re-run.`
+                      : `Run ${verifierCount} oracle check${verifierCount === 1 ? "" : "s"} against the live sandbox.`
+                  }
+                >
+                  {isVerifying ? (
+                    <>
+                      <span className="w-2.5 h-2.5 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+                      <span>Verifying…</span>
+                    </>
+                  ) : allOk ? (
+                    <>
+                      <I.Check className="w-3 h-3" /> Verified ({passed}/{total})
+                    </>
+                  ) : someFailed ? (
+                    <>
+                      <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"/></svg>
+                      Verifier ({passed}/{total})
+                    </>
+                  ) : (
+                    <>Run verifier ({verifierCount})</>
+                  )}
+                </button>
+              );
+            })()}
             {isLatest && <span className="text-[11px] text-gray-400 ml-auto">Ask in the composer below to refine.</span>}
           </div>
         )}
@@ -1132,6 +1365,7 @@ function ChatSpine({
   onExpandGraph,
   stage, canRun, onRun,
   readOnly,
+  verifierCount, onRunVerifier, isVerifying,
 }: {
   messages: ChatMessage[];
   agentStates: Record<string, AgentState>;
@@ -1148,6 +1382,11 @@ function ChatSpine({
   canRun: boolean;
   onRun: () => void;
   readOnly?: boolean;
+  /** Forwarded to AssistantAnswerTurn so the latest enterprise answer can
+   *  surface a "Run verifier" button. ``undefined`` for non-enterprise. */
+  verifierCount?: number;
+  onRunVerifier?: () => void;
+  isVerifying?: boolean;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -1159,6 +1398,15 @@ function ChatSpine({
   let answerVersion = 0;
   const latestPlanIdx = messages.map(m => !!m.plan).lastIndexOf(true);
   const latestAnswerIdx = messages.map(m => !!m.isAnswer).lastIndexOf(true);
+  // Most recent verifier run that belongs to the latest answer turn
+  // (i.e. appended into the chat after this run's answer). Older runs
+  // before a re-run/refine are intentionally ignored so the inline
+  // button reflects only the current world state.
+  let latestVerifierRun: import("./types").VerifierRunResponse | null = null;
+  for (let i = messages.length - 1; i > latestAnswerIdx; i--) {
+    const v = messages[i].verifierRun;
+    if (v) { latestVerifierRun = v; break; }
+  }
 
   return (
     <div className="flex-1 overflow-y-auto px-5 py-6 space-y-6">
@@ -1197,7 +1445,15 @@ function ChatSpine({
                 isExecuting={isExecuting || !!readOnly}
                 versionLabel={`v${answerVersion}`}
                 isLatest={isLatestAnswer}
+                verifierCount={isLatestAnswer && !readOnly ? verifierCount : undefined}
+                onRunVerifier={isLatestAnswer && !readOnly ? onRunVerifier : undefined}
+                isVerifying={isLatestAnswer ? isVerifying : false}
+                verifierResult={isLatestAnswer ? latestVerifierRun : null}
               />
+            ) : msg.verifierRun ? (
+              <VerifierTurn run={msg.verifierRun} />
+            ) : msg.warning ? (
+              <AssistantWarningTurn content={msg.warning} />
             ) : (
               <AssistantMessageTurn content={msg.content} />
             )}
@@ -1213,6 +1469,18 @@ function ChatSpine({
               <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
               <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
               <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isVerifying && (
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-start gap-3">
+            <Avatar role="assistant" />
+            <div className="flex-1 flex items-center gap-2 py-2 text-xs text-indigo-600">
+              <span className="w-3 h-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
+              <span>Running oracle verifier against the live sandbox…</span>
             </div>
           </div>
         </div>
@@ -1424,7 +1692,10 @@ export default function App() {
     stage, plan, graph, agentStates, finalAnswer, problem: orchProblem, error, isLoading, isRefining,
     subagentModel, chatMessages, undoStack, redoStack, customAgents, subagentConfigs,
     pendingQueue, isShared,
-    generatePlan, executePlan, cancelExecution, cancelRefine, undoPlan, redoPlan,
+    enterpriseTaskId, enterpriseTask, sandboxSnapshot, sandboxDiffs, sandboxStatus, isVerifying,
+    generatePlan, generateEnterprisePlan, previewEnterpriseTask, clearSandboxPreview,
+    runVerifier,
+    executePlan, cancelExecution, cancelRefine, undoPlan, redoPlan,
     queueRefine, editQueued, removeQueued,
     switchToPlan, updateCustomAgent, updateSubagentConfig, setSubagentModel, reset,
     createShare, exitSharedMode,
@@ -1477,6 +1748,44 @@ export default function App() {
     document.body.style.cursor = "col-resize";
   }, [rightWidth]);
 
+  // Sandbox column (5th column, enterprise mode only) — independent width &
+  // persistence so it doesn't fight with the existing graph panel.
+  const SANDBOX_DEFAULT = 460;
+  const SANDBOX_MIN = 320;
+  const SANDBOX_MAX = 1100;
+  const [sandboxWidth, setSandboxWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return SANDBOX_DEFAULT;
+    const stored = parseInt(window.localStorage.getItem("mas-orchestra:sandboxWidth") || "", 10);
+    return Number.isFinite(stored) && stored >= SANDBOX_MIN && stored <= SANDBOX_MAX ? stored : SANDBOX_DEFAULT;
+  });
+  const [isSandboxResizing, setIsSandboxResizing] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("mas-orchestra:sandboxWidth", String(sandboxWidth));
+  }, [sandboxWidth]);
+  const startSandboxResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sandboxWidth;
+    setIsSandboxResizing(true);
+    const onMove = (ev: PointerEvent) => {
+      const delta = startX - ev.clientX;
+      const cap = Math.min(SANDBOX_MAX, Math.max(SANDBOX_MIN, window.innerWidth - 480));
+      setSandboxWidth(Math.min(cap, Math.max(SANDBOX_MIN, startW + delta)));
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      setIsSandboxResizing(false);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  }, [sandboxWidth]);
+
   // In shared mode the left settings sidebar would be confusing — collapse it.
   useEffect(() => { if (isShared) { setLeftOpen(false); } }, [isShared]);
 
@@ -1494,6 +1803,75 @@ export default function App() {
     const dom = DATASETS.find(d => d.value === dataset)?.dom ?? "high";
     generatePlan(question, dataset, dom, answer);
   };
+
+  const submitEnterprise = (task: import("./types").EnterpriseTask, enabledTools: string[], dom: DomLevel) => {
+    generateEnterprisePlan(task, enabledTools, dom);
+  };
+
+  // Drop the sandbox preview when the user leaves enterprise mode (without
+  // having actually started a plan), so the 5th column doesn't linger.
+  useEffect(() => {
+    if (input.mode !== "enterprise" && !enterpriseTaskId) {
+      clearSandboxPreview();
+    }
+  }, [input.mode, enterpriseTaskId, clearSandboxPreview]);
+
+  // When a shared snapshot loads (read-only) for an enterprise run, the
+  // orchestration hook rehydrates ``enterpriseTaskId`` / ``sandboxSnapshot``
+  // — but ``input.mode`` is local App state and would still say "custom",
+  // hiding mode-gated UI bits like the EnterprisePicker context banner.
+  // Sync it from the shared payload's enterprise marker.
+  useEffect(() => {
+    if (isShared && enterpriseTaskId && input.mode !== "enterprise") {
+      setInput(s => ({ ...s, mode: "enterprise" }));
+    }
+  }, [isShared, enterpriseTaskId, input.mode]);
+
+  /** Per-tool legend rows for the LeftSidebar "Agent types" section.
+   * Priority:
+   *   1. If a plan exists, list the actual MCPAgent / Executor nodes by
+   *      their tool-derived display labels (e.g. ``CreateCalendarAgent``).
+   *   2. Else, if the user has picked a task in the EnterprisePicker, show
+   *      its ``default_tools`` mapped to agent labels — gives the user a
+   *      preview of who could be on the team before "Design plan" runs.
+   *   3. Else fall back to the generic two-row pool. */
+  const enterpriseAgents = useMemo<{ type: string; description: string; color: string }[]>(() => {
+    if (input.mode !== "enterprise") return [];
+    if (graph?.agents?.length) {
+      const items: { type: string; description: string; color: string }[] = [];
+      const seen = new Set<string>();
+      for (const a of graph.agents) {
+        const label = displayAgentType(a);
+        if (seen.has(label)) continue;
+        seen.add(label);
+        const isExec = a.type === "EnterpriseExecutorAgent";
+        items.push({
+          type: label,
+          description: isExec
+            ? "Final summarizer LLM. Reads upstream agent outputs and writes the answer."
+            : a.tool_name
+              ? `LLM wielding the ${a.tool_name} MCP tool.`
+              : "LLM wielding one MCP tool.",
+          color: TYPE_COLOR[a.type as AgentType] || TYPE_COLOR.MCPAgent,
+        });
+      }
+      return items;
+    }
+    if (enterpriseTask?.default_tools?.length) {
+      const items = enterpriseTask.default_tools.map(tn => ({
+        type: toolToAgentLabel(tn),
+        description: `LLM wielding the ${tn} MCP tool.`,
+        color: TYPE_COLOR.MCPAgent,
+      }));
+      items.push({
+        type: "EnterpriseExecutorAgent",
+        description: "Final summarizer LLM. Reads upstream outputs and writes the answer.",
+        color: TYPE_COLOR.EnterpriseExecutorAgent,
+      });
+      return items;
+    }
+    return [];
+  }, [input.mode, graph, enterpriseTask]);
 
   const handleRefine = () => {
     const v = chatInput.trim();
@@ -1550,6 +1928,7 @@ export default function App() {
             subagentModel={subagentModel}
             onSubagentChange={setSubagentModel}
             disabled={hasConversation}
+            enterpriseAgents={enterpriseAgents}
           />
         </aside>
 
@@ -1576,6 +1955,8 @@ export default function App() {
               expected={input.expected} onExpectedChange={e => setInput(s => ({ ...s, expected: e }))}
               onSubmitCustom={submitCustom}
               onSubmitDataset={submitDataset}
+              onSubmitEnterprise={submitEnterprise}
+              onPreviewEnterprise={previewEnterpriseTask}
               isLoading={isLoading}
             />
           ) : expandedGraph && graph ? (
@@ -1620,6 +2001,9 @@ export default function App() {
                 canRun={canExecute}
                 onRun={executePlan}
                 readOnly={isShared}
+                verifierCount={enterpriseTask?.verifier_count}
+                onRunVerifier={runVerifier}
+                isVerifying={isVerifying}
               />
               {!isShared && (
                 <Composer
@@ -1693,6 +2077,38 @@ export default function App() {
               canRedo={redoStack.length > 0 && !isRefining && !(stage === "execute" && isLoading)}
             />
           </aside>
+        )}
+
+        {/* ── 5th column: Sandbox (enterprise mode only) ──
+            Shows as soon as the user selects an enterprise task — even
+            before designing a plan — by triggering ``previewEnterpriseTask``
+            which fetches a cached snapshot from /enterprise/snapshot/:id. */}
+        {sandboxSnapshot && !expandedGraph && (input.mode === "enterprise" || enterpriseTaskId) && (
+          <>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize sandbox panel"
+              onPointerDown={startSandboxResize}
+              onDoubleClick={() => setSandboxWidth(SANDBOX_DEFAULT)}
+              title="Drag to resize · Double-click to reset"
+              className={`group relative flex-none w-1 cursor-col-resize select-none ${isSandboxResizing ? "" : "transition-colors duration-150"}`}
+            >
+              <div className={`absolute inset-y-0 left-0 right-0 ${isSandboxResizing ? "bg-emerald-400" : "bg-gray-200 group-hover:bg-emerald-300"}`} />
+              <div className="absolute inset-y-0 -left-1.5 -right-1.5" />
+            </div>
+            <aside
+              className={`border-l bg-white overflow-hidden flex-none ${isSandboxResizing ? "" : "transition-[width] duration-200"}`}
+              style={{ width: sandboxWidth }}
+            >
+              <SandboxPanel
+                snapshot={sandboxSnapshot}
+                diffs={sandboxDiffs}
+                status={sandboxStatus}
+                isExecuting={stage === "execute" && isLoading}
+              />
+            </aside>
+          </>
         )}
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { Graph, AgentState, Dataset, DomLevel, Plan, Stage, SubagentModel, CustomAgentConfig, SubagentConfig, ChatMessage, ShareSnapshot } from "../types";
+import type { Graph, AgentState, Dataset, DomLevel, Plan, Stage, SubagentModel, CustomAgentConfig, SubagentConfig, ChatMessage, ShareSnapshot, EnterpriseTask, SandboxSnapshot, SandboxDiff, VerifierRunResponse } from "../types";
 import { track } from "../analytics";
 
 interface State {
@@ -16,6 +16,15 @@ interface State {
   error: string | null;
   isLoading: boolean;
   isRefining: boolean;
+  // Enterprise-mode runtime state
+  enterpriseTaskId: string | null;
+  enterpriseTask: EnterpriseTask | null;
+  enabledTools: string[];
+  sandboxSnapshot: SandboxSnapshot | null;
+  sandboxDiffs: SandboxDiff[];
+  sandboxStatus: string | null;
+  // True while a user-triggered /enterprise/verify call is in flight.
+  isVerifying: boolean;
 }
 
 const initial: State = {
@@ -32,6 +41,13 @@ const initial: State = {
   error: null,
   isLoading: false,
   isRefining: false,
+  enterpriseTaskId: null,
+  enterpriseTask: null,
+  enabledTools: [],
+  sandboxSnapshot: null,
+  sandboxDiffs: [],
+  sandboxStatus: null,
+  isVerifying: false,
 };
 
 interface Snapshot {
@@ -87,6 +103,147 @@ export function useOrchestration() {
   const msgsRef = useRef(chatMessages);
   msgsRef.current = chatMessages;
 
+  /** Preview the sandbox for a task BEFORE designing a plan. Fetches
+   * `/enterprise/snapshot/{id}` (backed by the same cache as /plan) and
+   * sets `sandboxSnapshot` so the 5th column shows the live world. Safe
+   * to call repeatedly as the user clicks between task cards.
+   */
+  const previewEnterpriseTask = useCallback(async (task: EnterpriseTask) => {
+    // Don't disrupt an in-flight execution.
+    if (stateRef.current.stage === "execute" && stateRef.current.isLoading) return;
+    // Optimistically remember the task + clear any prior diffs so the panel
+    // doesn't show changes that belong to a different task.
+    setState(s => ({
+      ...s,
+      enterpriseTask: task,
+      sandboxStatus: "Loading sandbox…",
+      sandboxDiffs: [],
+    }));
+    try {
+      const res = await fetch(`/enterprise/snapshot/${encodeURIComponent(task.id)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const snap: SandboxSnapshot = await res.json();
+      // Only apply if the user is still looking at this task — race-safe.
+      setState(s => s.enterpriseTask?.id === task.id
+        ? { ...s, sandboxSnapshot: snap, sandboxStatus: null }
+        : s);
+    } catch (err) {
+      // Swallow aborted fetches (user clicked a different task / switched
+      // modes mid-flight). Browsers surface those as either an AbortError
+      // or "TypeError: Failed to fetch" and they're benign.
+      const msg = err instanceof Error ? err.message : String(err);
+      const aborted = (err instanceof DOMException && err.name === "AbortError")
+        || /aborted|abort|Failed to fetch|NetworkError/i.test(msg);
+      if (aborted) return;
+      setState(s => s.enterpriseTask?.id === task.id
+        ? { ...s, sandboxStatus: `Sandbox preview failed: ${msg}` }
+        : s);
+    }
+  }, []);
+
+  /** Run the task's oracle verifiers against the post-run sandbox. Appends
+   *  an assistant message carrying ``verifierRun`` so the chat preserves
+   *  the result (and the share snapshot picks it up automatically). Safe
+   *  to call multiple times; each click appends a fresh report. */
+  const runVerifier = useCallback(async () => {
+    const cur = stateRef.current;
+    if (!cur.enterpriseTaskId) return;
+    if (cur.isVerifying) return;
+    setState(s => ({ ...s, isVerifying: true, error: null }));
+    try {
+      const res = await fetch("/enterprise/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: cur.enterpriseTaskId }),
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => `HTTP ${res.status}`);
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+      const data: VerifierRunResponse = await res.json();
+      const summary = `Verifier: ${data.passed}/${data.total} checks passed.`;
+      setChatMessages(prev => [
+        ...prev,
+        { role: "assistant", content: summary, verifierRun: data },
+      ]);
+    } catch (err) {
+      setChatMessages(prev => [
+        ...prev,
+        { role: "assistant", content: `Verifier failed to run: ${err}` },
+      ]);
+    } finally {
+      setState(s => ({ ...s, isVerifying: false }));
+    }
+  }, []);
+
+  /** Clear sandbox preview state — call when the user switches away from
+   *  enterprise mode so the 5th column doesn't linger. */
+  const clearSandboxPreview = useCallback(() => {
+    setState(s => ({
+      ...s, enterpriseTask: null, sandboxSnapshot: null,
+      sandboxDiffs: [], sandboxStatus: null,
+    }));
+  }, []);
+
+  const generateEnterprisePlan = useCallback(async (task: EnterpriseTask, enabledTools: string[], dom: DomLevel = "high") => {
+    setState(s => ({
+      ...s,
+      problem: task.user_prompt,
+      dataset: null,
+      dom,
+      isLoading: true,
+      error: null,
+      enterpriseTaskId: task.id,
+      enterpriseTask: task,
+      enabledTools,
+      sandboxSnapshot: null,
+      sandboxDiffs: [],
+      sandboxStatus: null,
+    }));
+    setChatMessages([]);
+    setUndoStack([]);
+    setRedoStack([]);
+    track("plan_generated", { mode: "enterprise", domain: task.domain, dom, problem_length: task.user_prompt.length });
+    try {
+      const res = await fetch("/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          problem: task.user_prompt,
+          enterprise_task_id: task.id,
+          enabled_tools: enabledTools,
+          subagent_model: stateRef.current.subagentModel,
+          dom,
+        }),
+      });
+      if (!res.ok) throw new Error(`Plan failed: ${res.status}`);
+      const planResp: Plan & { initial_snapshot?: SandboxSnapshot | null; warning?: string | null } = await res.json();
+      const { initial_snapshot, warning, ...plan } = planResp;
+      const agentStates = Object.fromEntries(plan.graph.agents.map(a => [a.id, { id: a.id, status: "pending" as const }]));
+      const introMessage: ChatMessage = {
+        role: "assistant",
+        content: plan.thinking
+          ? `Enterprise plan ready: ${plan.graph.agents.length} agents.\n\n${plan.thinking}`
+          : `Enterprise plan ready: ${plan.graph.agents.length} agents.`,
+        plan,
+      };
+      const msgs: ChatMessage[] = [{ role: "user", content: task.user_prompt }];
+      if (warning) msgs.push({ role: "assistant", content: warning, warning });
+      msgs.push(introMessage);
+      setChatMessages(msgs);
+      setCustomAgents([]);
+      setState(s => ({
+        ...s, stage: "plan", plan, graph: plan.graph, agentStates,
+        finalAnswer: null, isLoading: false,
+        // Surface the seeded sandbox right after planning so the user can
+        // study the "before" state before clicking Run.
+        sandboxSnapshot: initial_snapshot || null,
+      }));
+    } catch (err) {
+      setState(s => ({ ...s, error: String(err), isLoading: false }));
+    }
+  }, []);
+
   const generatePlan = useCallback(async (problem: string, dataset: Dataset | null, dom: DomLevel, expectedAnswer: string) => {
     setState(s => ({ ...s, problem, dataset, dom, expectedAnswer, isLoading: true, error: null }));
     setChatMessages([]);
@@ -101,7 +258,8 @@ export function useOrchestration() {
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`Plan failed: ${res.status}`);
-      const plan: Plan = await res.json();
+      const planResp: Plan & { warning?: string | null } = await res.json();
+      const { warning, ...plan } = planResp;
       const agentStates = Object.fromEntries(plan.graph.agents.map(a => [a.id, { id: a.id, status: "pending" as const }]));
       const introMessage: ChatMessage = {
         role: "assistant",
@@ -110,7 +268,12 @@ export function useOrchestration() {
           : `Plan generated with ${plan.graph.agents.length} agents. You can refine it by chatting below.`,
         plan,
       };
-      setChatMessages([{ role: "user", content: problem }, introMessage]);
+      const msgs: ChatMessage[] = [{ role: "user", content: problem }];
+      // Surface planner warnings (vLLM down → mock fallback, etc.) before
+      // the plan turn so the user sees them right at the top.
+      if (warning) msgs.push({ role: "assistant", content: warning, warning });
+      msgs.push(introMessage);
+      setChatMessages(msgs);
       setCustomAgents([]);
       setState(s => ({ ...s, stage: "plan", plan, graph: plan.graph, agentStates, finalAnswer: plan.graph.direct_solution || null, isLoading: false }));
     } catch (err) {
@@ -124,7 +287,14 @@ export function useOrchestration() {
     const freshStates = Object.fromEntries(
       state.plan.graph.agents.map(a => [a.id, { id: a.id, status: "pending" as const }])
     );
-    setState(s => ({ ...s, stage: "execute", isLoading: true, error: null, agentStates: freshStates, finalAnswer: null }));
+    setState(s => ({
+      ...s, stage: "execute", isLoading: true, error: null,
+      agentStates: freshStates, finalAnswer: null,
+      // Keep the pre-run sandbox snapshot visible; the backend will
+      // overwrite it with a fresh post-seed snapshot in a moment. Reset
+      // diffs so they don't carry over from a previous run.
+      sandboxDiffs: [], sandboxStatus: null,
+    }));
 
     // Attach custom configs to CustomAgent nodes + subagent_configs to built-in nodes
     const graphToSend = { ...state.plan.graph };
@@ -147,10 +317,14 @@ export function useOrchestration() {
     abortRef.current = abort;
 
     try {
+      const body: Record<string, unknown> = {
+        problem: state.problem, graph: graphToSend, subagent_model: state.subagentModel,
+      };
+      if (state.enterpriseTaskId) body.enterprise_task_id = state.enterpriseTaskId;
       const res = await fetch("/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ problem: state.problem, graph: graphToSend, subagent_model: state.subagentModel }),
+        body: JSON.stringify(body),
         signal: abort.signal,
       });
       if (!res.ok) throw new Error(`Execute failed: ${res.status}`);
@@ -160,6 +334,10 @@ export function useOrchestration() {
 
       const decoder = new TextDecoder();
       let buffer = "";
+      // sse_starlette streams `event: <name>\ndata: <json>\n\n` blocks. We
+      // track the most recent event name so we can route enterprise events
+      // (sandbox_snapshot, sandbox_diff, status) without inferring from shape.
+      let currentEvent = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -169,8 +347,29 @@ export function useOrchestration() {
         buffer = lines.pop() || "";
 
         for (const line of lines) {
+          if (line.startsWith("event:")) {
+            currentEvent = line.slice(6).trim();
+            continue;
+          }
           if (!line.startsWith("data:")) continue;
           const data = JSON.parse(line.slice(5).trim());
+
+          // Enterprise events first (event-name dispatch is more reliable).
+          if (currentEvent === "sandbox_snapshot") {
+            setState(s => ({ ...s, sandboxSnapshot: data as SandboxSnapshot }));
+            continue;
+          }
+          if (currentEvent === "sandbox_diff") {
+            const diff: SandboxDiff = { ...data, ts: Date.now() };
+            setState(s => ({ ...s, sandboxDiffs: [...s.sandboxDiffs, diff] }));
+            continue;
+          }
+          if (currentEvent === "status") {
+            setState(s => ({ ...s, sandboxStatus: data?.message ?? null }));
+            continue;
+          }
+
+          // Existing reasoning-mode dispatch by data shape.
           if (data.agentId && !data.output && !data.error) {
             setState(s => ({ ...s, agentStates: { ...s.agentStates, [data.agentId]: { id: data.agentId, status: "running" } } }));
           } else if (data.agentId && data.output) {
@@ -194,7 +393,7 @@ export function useOrchestration() {
     } finally {
       abortRef.current = null;
     }
-  }, [state.plan, state.problem, state.subagentModel, customAgents]);
+  }, [state.plan, state.problem, state.subagentModel, state.enterpriseTaskId, customAgents, subagentConfigs]);
 
   const cancelExecution = useCallback(() => {
     abortRef.current?.abort();
@@ -228,16 +427,25 @@ export function useOrchestration() {
     try {
       const apiMessages = updatedMessages.map(m => ({ role: m.role, content: m.content }));
 
+      const refineBody: Record<string, unknown> = {
+        problem: state.problem,
+        current_xml: state.plan.xml,
+        messages: apiMessages,
+        dom: state.dom,
+        custom_agents: customAgents,
+      };
+      // Enterprise-mode refinement: tell the backend which gym task we're
+      // refining so it routes to the enterprise refiner (MCPAgent schema,
+      // gym tool catalog, gym system/user prompts). Reasoning-mode refine
+      // requests omit both fields and behave exactly as before.
+      if (state.enterpriseTaskId) {
+        refineBody.enterprise_task_id = state.enterpriseTaskId;
+        refineBody.enabled_tools = state.enabledTools;
+      }
       const res = await fetch("/refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          problem: state.problem,
-          current_xml: state.plan.xml,
-          messages: apiMessages,
-          dom: state.dom,
-          custom_agents: customAgents,
-        }),
+        body: JSON.stringify(refineBody),
         signal: abort.signal,
       });
       if (!res.ok) throw new Error(`Refine failed: ${res.status}`);
@@ -268,7 +476,7 @@ export function useOrchestration() {
     } finally {
       if (refineAbortRef.current === abort) refineAbortRef.current = null;
     }
-  }, [state.plan, state.problem, state.dom, customAgents, chatMessages]);
+  }, [state.plan, state.problem, state.dom, state.enterpriseTaskId, state.enabledTools, customAgents, chatMessages]);
 
   const cancelRefine = useCallback(() => {
     refineAbortRef.current?.abort();
@@ -370,6 +578,10 @@ export function useOrchestration() {
 
   const createShare = useCallback(async (): Promise<{ id: string; url: string } | null> => {
     const cur = stateRef.current;
+    // Enterprise runs need extra payload so the read-only viewer can render
+    // the EnterprisePicker context (task title/prompt) and the 5th column
+    // (sandbox graph + diffs). Reasoning shares simply omit these fields.
+    const isEnterprise = !!cur.enterpriseTaskId;
     const snapshot: ShareSnapshot = {
       problem: cur.problem,
       dataset: cur.dataset,
@@ -383,6 +595,16 @@ export function useOrchestration() {
       chat_messages: msgsRef.current,
       custom_agents: customAgents,
       subagent_configs: subagentConfigs,
+      mode: isEnterprise ? "enterprise" : "reasoning",
+      ...(isEnterprise
+        ? {
+            enterprise_task_id: cur.enterpriseTaskId,
+            enterprise_task: cur.enterpriseTask,
+            enabled_tools: cur.enabledTools,
+            sandbox_snapshot: cur.sandboxSnapshot,
+            sandbox_diffs: cur.sandboxDiffs,
+          }
+        : {}),
     };
     try {
       const res = await fetch("/share", {
@@ -438,6 +660,15 @@ export function useOrchestration() {
         stage: snap.final_answer ? "result" : (snap.plan ? "plan" : "input"),
         isLoading: false,
         isRefining: false,
+        // Enterprise replay payload. ``mode === "enterprise"`` OR the
+        // presence of an ``enterprise_task_id`` is enough to tell the UI
+        // to render the EnterprisePicker context + the 5th-column sandbox.
+        enterpriseTaskId: snap.enterprise_task_id ?? null,
+        enterpriseTask: snap.enterprise_task ?? null,
+        enabledTools: snap.enabled_tools ?? [],
+        sandboxSnapshot: snap.sandbox_snapshot ?? null,
+        sandboxDiffs: snap.sandbox_diffs ?? [],
+        sandboxStatus: null,
       }));
       track("share_loaded", { id: shareId });
       return true;
@@ -503,5 +734,5 @@ export function useOrchestration() {
     }
   }, []);
 
-  return { ...state, customAgents, subagentConfigs, chatMessages, undoStack, redoStack, pendingQueue, isShared, generatePlan, executePlan, cancelExecution, refinePlan, cancelRefine, queueRefine, editQueued, removeQueued, undoPlan, redoPlan, switchToPlan, designAgent, removeCustomAgent, updateCustomAgent, updateSubagentConfig, setSubagentModel, goToStage, reset, createShare, loadShare, exitSharedMode };
+  return { ...state, customAgents, subagentConfigs, chatMessages, undoStack, redoStack, pendingQueue, isShared, generatePlan, generateEnterprisePlan, previewEnterpriseTask, clearSandboxPreview, runVerifier, executePlan, cancelExecution, refinePlan, cancelRefine, queueRefine, editQueued, removeQueued, undoPlan, redoPlan, switchToPlan, designAgent, removeCustomAgent, updateCustomAgent, updateSubagentConfig, setSubagentModel, goToStage, reset, createShare, loadShare, exitSharedMode };
 }

@@ -15,6 +15,7 @@ export default defineConfig({
       '/health': 'http://localhost:8005',
       '/dataset': 'http://localhost:8005',
       '/share': 'http://localhost:8005',
+      '/enterprise': 'http://localhost:8005',
     }
   }
 })

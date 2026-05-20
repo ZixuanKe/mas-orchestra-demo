@@ -19,6 +19,13 @@ def to_agent_type(name: str) -> AgentType:
         "reflexion": AgentType.REFLEXION, "reflexionagent": AgentType.REFLEXION,
         "websearch": AgentType.WEBSEARCH, "websearchagent": AgentType.WEBSEARCH,
         "custom": AgentType.CUSTOM, "customagent": AgentType.CUSTOM,
+        # Enterprise mode agent types. We accept the legacy "tool/ToolAgent"
+        # synonyms so older plans still parse.
+        "mcp": AgentType.MCP_AGENT, "mcpagent": AgentType.MCP_AGENT,
+        "tool": AgentType.MCP_AGENT, "toolagent": AgentType.MCP_AGENT,
+        "enterpriseexecutor": AgentType.ENTERPRISE_EXECUTOR,
+        "enterpriseexecutoragent": AgentType.ENTERPRISE_EXECUTOR,
+        "executoragent": AgentType.ENTERPRISE_EXECUTOR,
     }
     return types.get(name.lower().strip(), AgentType.COT)
 
@@ -68,12 +75,22 @@ def parse(xml: str, dom_level: str = "high") -> Graph:
     agents = []
     for aid, block, inp in raw_agents:
         deps = [d for d in parse_deps(inp) if d in agent_ids]
+        # Enterprise mode adds an optional <depends_on>a,b,c</depends_on> and a
+        # <tool_name> field per agent. Merge both deps sources.
+        explicit_deps = extract(block, "depends_on")
+        if explicit_deps:
+            for tok in re.split(r"[,\s]+", explicit_deps):
+                tok = tok.strip()
+                if tok and tok in agent_ids and tok not in deps:
+                    deps.append(tok)
+        tool_name = extract(block, "tool_name") or None
         agents.append(Agent(
             id=aid,
-            type=to_agent_type(extract(block, "agent_name") or "CoTAgent"),
+            type=to_agent_type(extract(block, "agent_name") or extract(block, "agent_type") or "CoTAgent"),
             description=extract(block, "agent_description"),
-            input=inp,
+            input=inp or extract(block, "agent_input"),
             depends_on=deps,
+            tool_name=tool_name,
         ))
 
     edges: list[Edge] = []

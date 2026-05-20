@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback } from "react";
 import { ReactFlow, Node, Edge as FlowEdge, Background, Controls, MiniMap, MarkerType, Handle, Position } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { Graph, AgentState, AgentType } from "../types";
+import { displayAgentType } from "../types";
 
 interface Props {
   graph: Graph;
@@ -19,6 +20,8 @@ const COLORS: Record<AgentType, string> = {
   ReflexionAgent: "#10b981",
   WebSearchAgent: "#ef4444",
   CustomAgent: "#ec4899",
+  MCPAgent: "#0ea5e9",
+  EnterpriseExecutorAgent: "#6366f1",
 };
 
 const STATUS_BORDER: Record<string, string> = {
@@ -35,7 +38,7 @@ const STATUS_BADGE: Record<string, string> = {
   failed: "bg-red-100 text-red-700",
 };
 
-function AgentNode({ data }: { data: { label: string; type: AgentType; status: string; selected?: boolean } }) {
+function AgentNode({ data }: { data: { label: string; type: AgentType; typeLabel: string; toolName?: string | null; status: string; selected?: boolean } }) {
   return (
     <>
       <Handle type="target" position={Position.Top} style={{ background: "#9ca3af", border: "none", width: 8, height: 8 }} />
@@ -43,8 +46,13 @@ function AgentNode({ data }: { data: { label: string; type: AgentType; status: s
         ${STATUS_BORDER[data.status] || STATUS_BORDER.pending}
         ${data.selected ? "ring-2 ring-blue-500 ring-offset-1" : ""}
       `}>
-        <div className="text-xs font-mono mb-1" style={{ color: COLORS[data.type] }}>{data.type}</div>
+        <div className="text-xs font-mono mb-1" style={{ color: COLORS[data.type] }}>{data.typeLabel}</div>
         <div className="text-sm font-medium text-gray-800">{data.label}</div>
+        {data.toolName && (
+          <div className="mt-0.5 text-[10px] font-mono text-sky-700 truncate" title={`MCP tool: ${data.toolName}`}>
+            🛠 {data.toolName}
+          </div>
+        )}
         {data.status === "running" && (
           <div className="mt-2 flex items-center gap-1.5">
             <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
@@ -123,6 +131,8 @@ export function GraphViewer({ graph, agentStates, openAgentId, onOpenAgentHandle
           data: {
             label: id,
             type: agent.type,
+            typeLabel: displayAgentType(agent),
+            toolName: agent.tool_name || null,
             status: agentStates[id]?.status || "pending",
             selected: id === selectedAgent,
           },

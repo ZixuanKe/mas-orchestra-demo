@@ -23,6 +23,10 @@ from .metaagent import call_metaagent
 from .executor import execute_agent
 from .refine import refine_plan
 from .designer import design_agent
+from .enterprise.gym_config import list_gyms, get_gym
+from .enterprise.tasks import list_tasks, get_task, task_count_by_domain
+from .enterprise.tool_catalog import get_tool_summary
+from . import enterprise_orch
 
 # limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="MAS-Orchestra")
@@ -35,12 +39,31 @@ class PlanRequest(BaseModel):
     problem: str
     dataset: Dataset | None = None
     dom: DomLevel | None = None
+    # Enterprise-mode fields. When `enterprise_task_id` is set the request is
+    # routed to the enterprise orchestrator and `dataset`/`dom`/`problem` are
+    # ignored (the task carries its own user/system prompt).
+    enterprise_task_id: str | None = None
+    enabled_tools: list[str] | None = None
+    subagent_model: str | None = None
 
 
 class PlanResponse(BaseModel):
     xml: str
     graph: dict
     thinking: str | None = None
+    # When the planner ran in enterprise mode we echo back the resolved
+    # task + tool catalog so the frontend doesn't have to refetch.
+    enterprise_task: dict | None = None
+    # Initial sandbox snapshot taken from a fresh seed of the task's gym DB.
+    # Sent so the UI can render the "before" state immediately, before the
+    # user even hits Run. Same shape as the sandbox_snapshot SSE event.
+    initial_snapshot: dict | None = None
+    # Non-fatal planner warning (e.g. vLLM unreachable so we returned a
+    # mock; enterprise planner LLM crashed so we returned the linear
+    # fallback). The frontend renders this as an inline warning turn so
+    # the user knows the displayed plan isn't what the trained planner
+    # would have produced.
+    warning: str | None = None
 
 
 class RefineRequest(BaseModel):
@@ -49,6 +72,15 @@ class RefineRequest(BaseModel):
     messages: list[dict] = []
     dom: DomLevel | None = None
     custom_agents: list[dict] = []
+    # Enterprise-mode refine: when set, /refine bypasses the reasoning-mode
+    # refiner (which only knows CoTAgent/SCAgent/… types and lacks the gym
+    # tool catalog) and routes to ``enterprise_orch.refine_enterprise_plan``
+    # which emits the MCPAgent/EnterpriseExecutorAgent schema.
+    enterprise_task_id: str | None = None
+    # Subset of tools the user has enabled in the EnterprisePicker. Used to
+    # narrow the catalog shown to the refiner LLM so it doesn't invent
+    # disabled tool names. Ignored in reasoning mode.
+    enabled_tools: list[str] | None = None
 
 
 class RefineResponse(BaseModel):
@@ -66,6 +98,8 @@ class ExecuteRequest(BaseModel):
     problem: str
     graph: dict
     subagent_model: str = "gpt-5.4-mini"
+    # If set, run the enterprise executor instead of the reasoning executor.
+    enterprise_task_id: str | None = None
 
 
 def sse(event: str, data: dict) -> dict:
@@ -75,20 +109,80 @@ def sse(event: str, data: dict) -> dict:
 @app.post("/plan")
 # @limiter.limit("10/hour")
 async def plan(req: PlanRequest) -> PlanResponse:
+    # Enterprise mode short-circuits the reasoning planner entirely.
+    if req.enterprise_task_id:
+        try:
+            task = get_task(req.enterprise_task_id)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        # Run the (LLM, slow) planner and the (gym round-trip) initial
+        # snapshot in parallel so users see the sandbox state and the plan
+        # arrive together rather than sequentially.
+        plan_task = asyncio.create_task(enterprise_orch.plan_enterprise(
+            task,
+            req.enabled_tools or list(task.default_tools),
+            planner_model=req.subagent_model or "gpt-5.4-mini",
+            dom=req.dom or DomLevel.HIGH,
+        ))
+        snap_task = asyncio.create_task(enterprise_orch.get_initial_snapshot(task))
+        (xml, graph, warning), initial_snapshot = await asyncio.gather(plan_task, snap_task)
+        match = re.search(r"<thinking>(.*?)</thinking>", xml, re.DOTALL | re.IGNORECASE)
+        thinking = match.group(1).strip() if match else None
+        return PlanResponse(
+            xml=xml, graph=graph.model_dump(), thinking=thinking,
+            enterprise_task=task.to_payload(),
+            initial_snapshot=initial_snapshot,
+            warning=warning,
+        )
+
     if req.dataset is not None:
         dom_level = DATASET_META[req.dataset]["dom"]
     else:
         dom_level = req.dom or DomLevel.HIGH
-    xml = await call_metaagent(req.problem, req.dataset, dom_level)
+    xml, warning = await call_metaagent(req.problem, req.dataset, dom_level)
     match = re.search(r"<thinking>(.*?)</thinking>", xml, re.DOTALL | re.IGNORECASE)
     thinking = match.group(1).strip() if match else None
     graph = parse(xml, dom_level.value)
-    return PlanResponse(xml=xml, graph=graph.model_dump(), thinking=thinking)
+    return PlanResponse(xml=xml, graph=graph.model_dump(), thinking=thinking, warning=warning)
 
 
 @app.post("/refine")
 async def refine(req: RefineRequest) -> RefineResponse:
     dom_level = req.dom or DomLevel.HIGH
+
+    # Enterprise-mode refinement uses a different schema (MCPAgent + tool
+    # catalog + gym prompts). Short-circuits to a dedicated refiner so the
+    # reasoning-mode prompt (which hard-codes CoT/SC/Debate/… agent types
+    # and has no <tool_name> field) never runs against an enterprise plan.
+    if req.enterprise_task_id:
+        try:
+            task = get_task(req.enterprise_task_id)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        raw = await enterprise_orch.refine_enterprise_plan(
+            task=task,
+            current_xml=req.current_xml,
+            messages=req.messages,
+            enabled_tools=req.enabled_tools or list(task.default_tools),
+            dom=dom_level,
+        )
+        truncated = "<truncation_warning>" in raw
+        msg_match = re.search(r"<message>(.*?)</message>", raw, re.DOTALL | re.IGNORECASE)
+        message = msg_match.group(1).strip() if msg_match else raw.strip()
+        if truncated:
+            message += "\n\n⚠️ Response was truncated — the plan may be incomplete."
+        has_plan = bool(re.search(r"<agent>\s*.*?<agent_id>\s*.+?\s*</agent_id>", raw, re.IGNORECASE | re.DOTALL))
+        if not has_plan:
+            return RefineResponse(message=message)
+        thinking_match = re.search(r"<thinking>(.*?)</thinking>", raw, re.DOTALL | re.IGNORECASE)
+        thinking = thinking_match.group(1).strip() if thinking_match else None
+        try:
+            graph = parse(raw, "high")
+            if not graph.agents:
+                return RefineResponse(message=f"{message}\n\n⚠️ Plan XML was malformed — showing previous plan. Try rephrasing.")
+            return RefineResponse(message=message, xml=raw, graph=graph.model_dump(), thinking=thinking)
+        except Exception as e:
+            return RefineResponse(message=f"{message}\n\n⚠️ Failed to parse plan: {e}")
 
     custom_hint = ""
     if req.custom_agents:
@@ -190,7 +284,88 @@ async def run_execution(problem: str, graph_dict: dict, subagent_model: str = "g
 @app.post("/execute")
 # @limiter.limit("10/hour")
 async def execute(req: ExecuteRequest):
+    if req.enterprise_task_id:
+        try:
+            task = get_task(req.enterprise_task_id)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        return EventSourceResponse(
+            enterprise_orch.run_enterprise(task, req.graph, req.subagent_model)
+        )
     return EventSourceResponse(run_execution(req.problem, req.graph, req.subagent_model))
+
+
+@app.get("/enterprise/domains")
+async def enterprise_domains():
+    return {"domains": list_gyms()}
+
+
+@app.get("/enterprise/tasks")
+async def enterprise_tasks(domain: str | None = None):
+    return {"tasks": [t.to_payload() for t in list_tasks(domain)]}
+
+
+@app.get("/enterprise/task-counts")
+async def enterprise_task_counts():
+    """Total tasks per domain — used by the picker to badge each domain tab
+    without having to load the full task list for every domain up front."""
+    return {"counts": task_count_by_domain()}
+
+
+@app.get("/enterprise/tools")
+async def enterprise_tools(domain: str):
+    try:
+        get_gym(domain)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"tools": await get_tool_summary(domain)}
+
+
+class EnterpriseVerifyRequest(BaseModel):
+    task_id: str
+
+
+@app.post("/enterprise/verify")
+async def enterprise_verify(req: EnterpriseVerifyRequest):
+    """Run the task's oracle verifiers against the post-run sandbox state.
+
+    The frontend exposes this as an opt-in "Run verifier" button under the
+    final answer of an enterprise run, so the user can independently check
+    whether the orchestration actually moved the world into the expected
+    state (the verifiers are the same SQL ground-truth assertions the gym
+    benchmark itself uses).
+    """
+    try:
+        task = get_task(req.task_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    try:
+        results = await enterprise_orch.run_verifiers(task)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    passed = sum(1 for r in results if r.get("passed"))
+    return {
+        "task_id": task.id,
+        "total": len(results),
+        "passed": passed,
+        "results": results,
+    }
+
+
+@app.get("/enterprise/snapshot/{task_id}")
+async def enterprise_snapshot(task_id: str):
+    """Return the cached initial sandbox snapshot for a task.
+
+    Used by the EnterprisePicker so the 5th column can render the live
+    sandbox state as soon as the user *selects* a task — before they even
+    design a plan. Backed by the same per-task cache that ``/plan`` uses,
+    so subsequent fetches are instant.
+    """
+    try:
+        task = get_task(task_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return await enterprise_orch.get_initial_snapshot(task)
 
 
 @app.get("/dataset/{name}")
@@ -232,6 +407,16 @@ class ShareRequest(BaseModel):
     custom_agents: list[dict] = Field(default_factory=list)
     subagent_configs: dict = Field(default_factory=dict)
     title: str | None = None
+    # Enterprise-mode replay payload. Stored verbatim and round-tripped to
+    # the frontend so the read-only view can paint the 5th column (sandbox
+    # graph + per-step diffs + activity ribbon) without needing live MCP
+    # access. ``None`` / missing for reasoning-mode shares.
+    mode: str | None = None  # "reasoning" | "enterprise"
+    enterprise_task_id: str | None = None
+    enterprise_task: dict | None = None
+    enabled_tools: list[str] = Field(default_factory=list)
+    sandbox_snapshot: dict | None = None
+    sandbox_diffs: list[dict] = Field(default_factory=list)
 
 
 class ShareResponse(BaseModel):

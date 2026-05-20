@@ -28,6 +28,13 @@ class AgentType(str, Enum):
     REFLEXION = "ReflexionAgent"
     WEBSEARCH = "WebSearchAgent"
     CUSTOM = "CustomAgent"
+    # Enterprise mode: an MCPAgent is an LLM that wields exactly one MCP
+    # tool — i.e. agent = LLM + tool, not raw tool calls. The orchestrator
+    # decides ordering; the per-agent LLM decides whether/how to call.
+    MCP_AGENT = "MCPAgent"
+    # Final answer-sink for enterprise mode: a plain LLM that summarizes the
+    # outcome of all upstream MCPAgent calls for the user.
+    ENTERPRISE_EXECUTOR = "EnterpriseExecutorAgent"
 
 
 class CustomStrategy(str, Enum):
@@ -81,6 +88,8 @@ class Agent(BaseModel):
     depends_on: list[str]
     custom_config: CustomAgentConfig | None = None
     subagent_config: SubagentConfig | None = None
+    # Enterprise mode only: the MCP tool this agent wraps.
+    tool_name: str | None = None
 
 
 class Edge(BaseModel):

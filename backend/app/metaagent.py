@@ -22,7 +22,18 @@ DEFAULT_CUSTOM_MODEL = {
 }
 
 
-async def call_metaagent(problem: str, dataset: Dataset | None, dom: DomLevel) -> str:
+async def call_metaagent(
+    problem: str, dataset: Dataset | None, dom: DomLevel,
+) -> tuple[str, str | None]:
+    """Generate the initial plan XML via the per-dataset vLLM model.
+
+    Returns ``(xml, warning_or_none)``. When the vLLM call fails (network
+    error, model crash, empty response, etc.) we still degrade gracefully
+    to a hardcoded mock so the demo doesn't die — but we also surface a
+    human-readable warning so the user knows the displayed plan is *not*
+    what the trained planner would have produced. The warning is rendered
+    inline in the conversation by the frontend.
+    """
     if dataset is not None:
         model: str = DATASET_META[dataset]["vllm_model"]
     else:
@@ -33,10 +44,24 @@ async def call_metaagent(problem: str, dataset: Dataset | None, dom: DomLevel) -
         resp = await get_vllm_client().chat.completions.create(
             model=model, messages=messages, temperature=0.7, max_tokens=4096,
         )
-        return resp.choices[0].message.content or ""
+        content = resp.choices[0].message.content or ""
+        if not content.strip():
+            mock = MOCK_LOW if dom == DomLevel.LOW else MOCK_HIGH
+            warning = (
+                f"vLLM planner ({model}) returned an empty response. "
+                "Using a generic fallback plan — the displayed agents are NOT "
+                "what the trained planner would have produced."
+            )
+            return mock, warning
+        return content, None
     except Exception as e:
-        print(f"vLLM error ({model}): {e}, using mock")
-        return MOCK_LOW if dom == DomLevel.LOW else MOCK_HIGH
+        mock = MOCK_LOW if dom == DomLevel.LOW else MOCK_HIGH
+        warning = (
+            f"vLLM planner ({model}) failed: {e}. "
+            "Using a generic fallback plan — the displayed agents are NOT "
+            "what the trained planner would have produced."
+        )
+        return mock, warning
 
 
 MOCK_LOW = """<thinking>
