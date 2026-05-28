@@ -1,7 +1,12 @@
 import os
 from openai import AsyncOpenAI
 from .models import Dataset, DATASET_META, DomLevel
-from .vllm_prompts import build_math_messages, build_mas_messages
+from .vllm_prompts import (
+    build_math_messages,
+    build_mas_messages,
+    build_masbench_math_messages,
+    build_masbench_mas_messages,
+)
 
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "")
 
@@ -33,12 +38,32 @@ async def call_metaagent(
     human-readable warning so the user knows the displayed plan is *not*
     what the trained planner would have produced. The warning is rendered
     inline in the conversation by the frontend.
+
+    Model selection:
+      • Every reasoning dataset pins to a single vLLM model via
+        ``DATASET_META`` — AIME→math, Hotpot→hotpotqa, BrowseComp →
+        browsecomp, MASBench→browsecomp. ``dom`` is what's passed in
+        (also pinned for datasets, free-toggle for custom problems).
+      • Custom problems (dataset=None) use ``DEFAULT_CUSTOM_MODEL[dom]``.
+      • MASBench additionally uses MASBench-specific prompts that
+        substitute ExtractAgent for WebSearchAgent throughout (no web
+        access available) — see ``build_masbench_mas_messages``.
     """
+    is_masbench = dataset == Dataset.MASBENCH
     if dataset is not None:
         model: str = DATASET_META[dataset]["vllm_model"]
     else:
         model = DEFAULT_CUSTOM_MODEL[dom]
-    messages = build_math_messages(problem) if dom == DomLevel.LOW else build_mas_messages(problem)
+
+    if is_masbench:
+        # MASBench is pinned to HIGH_EXTENSIVE → MAS-shaped prompt. The
+        # math-shaped builder is kept around for legacy callers but
+        # currently unreachable through DATASET_META.
+        messages = (build_masbench_math_messages(problem)
+                    if dom == DomLevel.LOW
+                    else build_masbench_mas_messages(problem))
+    else:
+        messages = build_math_messages(problem) if dom == DomLevel.LOW else build_mas_messages(problem)
 
     try:
         resp = await get_vllm_client().chat.completions.create(

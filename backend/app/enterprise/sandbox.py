@@ -74,19 +74,38 @@ _DOMAIN_VIEWS: dict[str, dict[str, Any]] = {
         },
     },
     "email": {
-        "tables": ["users", "labels", "threads", "messages", "drafts",
+        # ``message_labels`` is the many-to-many junction between
+        # ``messages`` and ``labels``; exposing it lets the AppView
+        # filter the Inbox list by a clicked label (INBOX / SENT /
+        # TRASH / UNREAD / …) and visualise add_label / remove_label
+        # tool calls as real diff events.
+        "tables": ["users", "labels", "threads", "messages",
+                   "message_labels", "drafts",
                    "filters", "delegates", "vacation_settings"],
+        # Pull a larger window for the tables that drive the inbox
+        # filtering chain — 50 rows of each isn't enough to cover the
+        # message ↔ label associations for a realistic preview.
+        "row_limits": {
+            "messages": 400,
+            "threads": 200,
+            "labels": 200,
+            "message_labels": 800,
+        },
         "links": {
             "labels":   [("user_id", "users", "id")],
             "threads":  [("user_id", "users", "id")],
             "messages": [("user_id", "users", "id"), ("thread_id", "threads", "id")],
+            "message_labels": [("message_id", "messages", "id"),
+                                ("label_id", "labels", "id")],
             "drafts":   [("message_id", "messages", "id")],
             "filters":  [("user_id", "users", "id")],
             "delegates": [("user_id", "users", "id")],
         },
         "hide_columns": {
             "*": _TIMESTAMPS,
-            "messages": {"raw", "snippet", "data", "size_estimate"},
+            # ``snippet`` intentionally kept visible — the AppView uses it
+            # as the message preview line (mirrors Gmail's inbox row).
+            "messages": {"raw", "data", "size_estimate"},
             "labels": {"color_json", "background_color", "text_color"},
         },
         "pk": {},
@@ -349,10 +368,14 @@ async def take_snapshot(
     """Snapshot the curated tables for ``domain``."""
     view = view_for(domain)
     tables = view.get("tables") or await client.list_tables()
+    per_table = view.get("row_limits") or {}
     snap = Snapshot(domain=domain)
     for tname in tables:
+        # Per-table override (e.g. junction/lookup tables that need
+        # more rows so list↔rail filtering covers the visible window).
+        limit = int(per_table.get(tname, table_limit))
         try:
-            rows = await client.sql(f"SELECT * FROM {tname} LIMIT {table_limit}")
+            rows = await client.sql(f"SELECT * FROM {tname} LIMIT {limit}")
         except Exception:
             continue
         if not rows:

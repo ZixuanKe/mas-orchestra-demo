@@ -5,6 +5,16 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { SandboxSnapshot, SandboxDiff, SandboxDiffEvent, SandboxOpKind } from "../types";
+import { CalendarAppView } from "./CalendarAppView";
+import { GenericAppView } from "./GenericAppView";
+import { GENERIC_APP_DOMAINS } from "./domainViews";
+
+// Domains that have a dedicated "App view" mockup. ``calendar`` uses the
+// hand-tuned Google-Calendar-style view; everything else dispatches to
+// GenericAppView, which adapts via domainViews.ts config.
+const APP_VIEW_DOMAINS = new Set<string>(["calendar", ...GENERIC_APP_DOMAINS]);
+const VIEW_STORAGE_KEY = "mas:sandboxView";
+type SandboxView = "app" | "graph";
 
 interface Props {
   snapshot: SandboxSnapshot | null;
@@ -43,15 +53,36 @@ function trim(s: string, n = 22): string {
 }
 
 /* ── Custom xyflow node: an entity row ── */
-type Op = "insert" | "update" | "delete";
+export type Op = "insert" | "update" | "delete";
 
-interface ChangeRecord {
+export interface ChangeRecord {
   op: Op;
   cols: string[];
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
   byAgent?: string;
   flashing: boolean;  // true while the recent-change pulse is active
+}
+
+/** Per-table "recent touch" record. Same flash-then-tint behavior the
+ *  table-header chips use; exposed so the App view can mirror it on its
+ *  own section headers (calendars rail, events list, etc.). */
+export type TableActivity = {
+  kind: SandboxOpKind; flashing: boolean;
+  byAgent?: string | null; toolName?: string | null;
+};
+
+/** Most recent step summary; the SandboxPanel's ActivityRibbon renders
+ *  this above the body and CalendarAppView consumes it to surface
+ *  effects from tools that don't bind to a snapshot table (e.g.
+ *  ``get_colors``, ``query_freebusy``). */
+export interface LastStep {
+  kind: SandboxOpKind;
+  byAgent: string;
+  toolName: string | null;
+  eventCount: number;
+  affectedTables: string[];
+  ts: number;
 }
 
 type NodeData = {
@@ -264,6 +295,27 @@ function ActivityRibbon({ step }: {
 }
 
 export function SandboxPanel({ snapshot, diffs, status, isExecuting }: Props) {
+  // ── View toggle (App | Graph) ────────────────────────────────────────
+  // App view is the friendly domain-specific mockup (e.g. Google-Calendar
+  // for the ``calendar`` domain). When no mockup is available for the
+  // current domain we silently force the graph view but still remember
+  // the user's preferred default for when they switch back to a supported
+  // domain. Preference persists in localStorage so toggling tasks or
+  // reloading the tab doesn't reset it.
+  const [view, setView] = useState<SandboxView>(() => {
+    try {
+      const stored = localStorage.getItem(VIEW_STORAGE_KEY);
+      return stored === "graph" || stored === "app" ? stored : "app";
+    } catch {
+      return "app";
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(VIEW_STORAGE_KEY, view); } catch { /* private mode */ }
+  }, [view]);
+  const appAvailable = !!snapshot && APP_VIEW_DOMAINS.has(snapshot.domain);
+  const effectiveView: SandboxView = view === "app" && appAvailable ? "app" : "graph";
+
   // ── Per-run change tracking ───────────────────────────────────────────
   // `runChanges` is the cumulative change record for THIS run. Each entry
   // stays in the map until a new run starts (i.e. `diffs` is reset to []),
@@ -275,24 +327,13 @@ export function SandboxPanel({ snapshot, diffs, status, isExecuting }: Props) {
   // granularity, so that read-only / errored / no-op steps (which produce no
   // row-level events) still leave a visible mark on the affected table
   // header. Flashes for FLASH_MS, then keeps a subtle tint.
-  type TableActivity = {
-    kind: SandboxOpKind; flashing: boolean;
-    byAgent?: string | null; toolName?: string | null;
-  };
   const [tableActivity, setTableActivity] = useState<Record<string, TableActivity>>({});
 
   // Most recent step summary, rendered as a sticky "activity ribbon" just
   // under the header. Always populated whenever ANY step (read / write /
   // noop / error) reports back — so the user can see live what each agent
   // did regardless of whether it mutated the DB.
-  const [lastStep, setLastStep] = useState<{
-    kind: SandboxOpKind;
-    byAgent: string;
-    toolName: string | null;
-    eventCount: number;
-    affectedTables: string[];
-    ts: number;
-  } | null>(null);
+  const [lastStep, setLastStep] = useState<LastStep | null>(null);
 
   // Tracks how many diff entries we've already folded into ``runChanges`` so
   // that loading a shared snapshot — which arrives as a fully-populated
@@ -574,10 +615,30 @@ export function SandboxPanel({ snapshot, diffs, status, isExecuting }: Props) {
           </div>
         )}
         {(status || isExecuting) && (
-          <span className="ml-auto flex items-center gap-1.5 text-amber-700">
+          <span className="flex items-center gap-1.5 text-amber-700">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            <span className="truncate max-w-[160px]">{status || "Running"}</span>
+            <span className="truncate max-w-[120px]">{status || "Running"}</span>
           </span>
+        )}
+        {snapshot && (
+          <div className="ml-auto flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5 text-[10px] font-medium">
+            <button
+              type="button"
+              onClick={() => setView("app")}
+              disabled={!appAvailable}
+              title={appAvailable ? "App view" : `App view not available for ${snapshot.domain} yet — showing relational graph.`}
+              className={`px-2 py-0.5 rounded transition-colors ${effectiveView === "app" ? "bg-white shadow-sm text-gray-800" : "text-gray-500 hover:text-gray-700"} disabled:opacity-40 disabled:cursor-not-allowed`}
+            >
+              App
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("graph")}
+              className={`px-2 py-0.5 rounded transition-colors ${effectiveView === "graph" ? "bg-white shadow-sm text-gray-800" : "text-gray-500 hover:text-gray-700"}`}
+            >
+              Graph
+            </button>
+          </div>
         )}
       </div>
 
@@ -588,9 +649,32 @@ export function SandboxPanel({ snapshot, diffs, status, isExecuting }: Props) {
           tell a successful read from a tool that quietly failed). */}
       {lastStep && <ActivityRibbon step={lastStep} />}
 
-      {/* Graph */}
+      {/* Viewport: dispatch between the friendly App view (Google-Calendar
+          style for the calendar domain) and the relational Graph view.
+          Both consume the same snapshot + per-run change state so the two
+          views are guaranteed to agree on what changed. */}
       <div className="flex-1 min-h-0 bg-gray-50">
-        {snapshot ? (
+        {!snapshot ? (
+          <div className="h-full flex items-center justify-center text-xs text-gray-400">
+            {isExecuting ? "Preparing sandbox…" : "Run the plan to see the sandbox state."}
+          </div>
+        ) : effectiveView === "app" ? (
+          snapshot.domain === "calendar" ? (
+            <CalendarAppView
+              snapshot={snapshot}
+              runChanges={runChanges}
+              tableActivity={tableActivity}
+              lastStep={lastStep}
+            />
+          ) : (
+            <GenericAppView
+              snapshot={snapshot}
+              runChanges={runChanges}
+              tableActivity={tableActivity}
+              lastStep={lastStep}
+            />
+          )
+        ) : (
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -608,10 +692,6 @@ export function SandboxPanel({ snapshot, diffs, status, isExecuting }: Props) {
             <Background gap={20} size={1} color="#e5e7eb" />
             <Controls position="bottom-right" showInteractive={false} />
           </ReactFlow>
-        ) : (
-          <div className="h-full flex items-center justify-center text-xs text-gray-400">
-            {isExecuting ? "Preparing sandbox…" : "Run the plan to see the sandbox state."}
-          </div>
         )}
       </div>
 

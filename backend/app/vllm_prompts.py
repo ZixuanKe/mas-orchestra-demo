@@ -940,3 +940,119 @@ def build_mas_messages(question: str) -> list[dict]:
         {"role": "user", "content": MAS_USER_PROMPT_TEMPLATE.replace("{question}", question)},
         {"role": "user", "content": MAS_USER_SUFFIX},
     ]
+
+
+# =====================================================================
+# MASBench-specific prompts — single global substring swap
+# =====================================================================
+#
+# Per user instruction: keep the original MATH_* / MAS_* prompts
+# bit-for-bit identical, just globally replace "WebSearchAgent" with
+# "ExtractAgent" everywhere it appears (agent enum lines, schema
+# blocks, ALL worked examples, final checklist, suffix description).
+# The orchestrator then learns the Extract semantics from the examples
+# themselves — e.g. the NYC/LA/Chicago vacancy example becomes "three
+# parallel ExtractAgents fan-in to a CoTAgent", which is exactly the
+# right pattern for MASBench multi-field extraction tasks.
+#
+# Bare "WebSearch" mentions in the prose ("entry points e.g. WebSearch
+# or initial reasoning", "three WebSearch agents in parallel") are
+# also renamed so the prose stays consistent with the agent-name tag
+# rename — otherwise the planner sees agent_name=ExtractAgent next to
+# prose saying "WebSearch agents" and gets confused.
+#
+# The one block that CAN'T be a literal swap is the per-agent
+# implementation-description JSON at the tail of MAS_USER_SUFFIX —
+# the original literally describes web_search / think_tool / citations,
+# which is a lie for ExtractAgent. That single block is replaced with
+# an Extract-appropriate description (same JSON shape).
+#
+# MATH variant already excludes WebSearchAgent from its enums and
+# examples, so we additionally add ExtractAgent to its enum lists so
+# the model can legally pick it for single-field extraction tasks.
+#
+# The vanilla MATH_* / MAS_* prompts and the AIME / HotpotQA /
+# BrowseComp paths are LEFT INTACT. Only MASBench routes here.
+# =====================================================================
+
+# Drop-in replacement for the WebSearchAgent JSON block at the tail
+# of MAS_USER_SUFFIX. Same JSON shape and keys (including the
+# original "desciption" typo) so the planner sees a uniform format.
+_EXTRACT_DESCRIPTION_BLOCK = (
+    'ExtractAgent: {"desciption": "Pulls specific fields, numbers, '
+    'dates, named entities, ids, counts, or quoted spans out of an '
+    'upstream agent\'s output (or the original question) WITHOUT '
+    'attempting to solve the task. Used as a cheap normalizer between '
+    'reasoning agents — e.g. to isolate one of several requested '
+    'values from a long passage so the next agent receives a focused '
+    'input.", "name": "Extract Agent (ExtractAgent)", '
+    '"required_arguments": {"agent_input": "The input for the '
+    'ExtractAgent. Describes WHAT to extract (which field / number / '
+    'span) and references upstream context via ${other_agent_id}. If '
+    'left empty (\\"\\") the parser will automatically replace it '
+    'with the original question.", '
+    '"implementation": "ExtractAgent reads the upstream context and '
+    'returns the requested field verbatim — it preserves numbers, '
+    'dates and quoted strings exactly, never invents facts, and emits '
+    'a compact representation (key:value lines, comma-separated '
+    'list, or JSON) suitable for downstream agents."}}'
+)
+
+
+def build_masbench_mas_messages(question: str) -> list[dict]:
+    """MASBench HIGH / HIGH_EXTENSIVE DoM (hotpotqa / browsecomp vLLM).
+
+    Vs. the original MAS prompt: a global swap of WebSearchAgent →
+    ExtractAgent (and bare "WebSearch" → "Extract" in narrative
+    mentions for prose consistency), plus the tail description-JSON
+    block is swapped for one that actually describes Extract behavior
+    (the original literally describes web_search tool internals). All
+    worked examples (NYC/LA/Chicago vacancy, Pope John Paul II, Asia
+    vs Europe, CO₂ taxis), all parallel / fan-in / diamond DAG
+    patterns, schema blocks, channels, and checklists are preserved.
+    """
+    user_prompt = (
+        MAS_USER_PROMPT_TEMPLATE
+        .replace("WebSearchAgent", "ExtractAgent")
+        .replace("WebSearch", "Extract")
+        .replace("{question}", question)
+    )
+    suffix = (
+        MAS_USER_SUFFIX
+        .replace("WebSearchAgent", "ExtractAgent")
+        .replace("WebSearch", "Extract")
+    )
+    # Swap just the tail description block (everything before it is
+    # untouched).
+    marker = "ExtractAgent: {"
+    idx = suffix.find(marker)
+    if idx >= 0:
+        suffix = suffix[:idx] + _EXTRACT_DESCRIPTION_BLOCK
+    return [
+        {"role": "system", "content": MAS_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": suffix},
+    ]
+
+
+def build_masbench_math_messages(question: str) -> list[dict]:
+    """MASBench LOW DoM (math vLLM).
+
+    The original MATH prompt already doesn't use WebSearchAgent in
+    its enums or worked examples, so for parity we just add
+    ``ExtractAgent`` to the two agent-enum lines so the model can
+    legally emit it. Everything else is left identical.
+    """
+    user_prompt = MATH_USER_PROMPT_TEMPLATE.replace(
+        "(select one of the agents: CoTAgent, SCAgent, DebateAgent, ReflexionAgent)",
+        "(select one of the agents: CoTAgent, SCAgent, DebateAgent, ReflexionAgent, ExtractAgent)",
+    ).replace("{question}", question)
+    suffix = MATH_USER_SUFFIX.replace(
+        "<agent_name>...</agent_name> (select one of the agents: CoTAgent, SCAgent, DebateAgent, ReflexionAgent)",
+        "<agent_name>...</agent_name> (select one of the agents: CoTAgent, SCAgent, DebateAgent, ReflexionAgent, ExtractAgent)",
+    )
+    return [
+        {"role": "system", "content": MATH_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": suffix},
+    ]

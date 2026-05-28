@@ -1,5 +1,6 @@
+import json
 import re
-from .models import Agent, Edge, Graph, AgentType
+from .models import Agent, Edge, Graph, AgentType, FILE_TOOL_AGENT_TYPES
 
 
 def extract(text: str, tag: str) -> str:
@@ -18,6 +19,7 @@ def to_agent_type(name: str) -> AgentType:
         "debate": AgentType.DEBATE, "debateagent": AgentType.DEBATE,
         "reflexion": AgentType.REFLEXION, "reflexionagent": AgentType.REFLEXION,
         "websearch": AgentType.WEBSEARCH, "websearchagent": AgentType.WEBSEARCH,
+        "extract": AgentType.EXTRACT, "extractagent": AgentType.EXTRACT,
         "custom": AgentType.CUSTOM, "customagent": AgentType.CUSTOM,
         # Enterprise mode agent types. We accept the legacy "tool/ToolAgent"
         # synonyms so older plans still parse.
@@ -26,6 +28,12 @@ def to_agent_type(name: str) -> AgentType:
         "enterpriseexecutor": AgentType.ENTERPRISE_EXECUTOR,
         "enterpriseexecutoragent": AgentType.ENTERPRISE_EXECUTOR,
         "executoragent": AgentType.ENTERPRISE_EXECUTOR,
+        # Local file-tool agents (executed by the CLI via the
+        # /execute → tool_request → /execute/tool-result roundtrip).
+        "readfile": AgentType.READ_FILE, "readfileagent": AgentType.READ_FILE,
+        "writefile": AgentType.WRITE_FILE, "writefileagent": AgentType.WRITE_FILE,
+        "patch": AgentType.PATCH, "patchagent": AgentType.PATCH,
+        "searchfiles": AgentType.SEARCH_FILES, "searchfilesagent": AgentType.SEARCH_FILES,
     }
     return types.get(name.lower().strip(), AgentType.COT)
 
@@ -84,13 +92,31 @@ def parse(xml: str, dom_level: str = "high") -> Graph:
                 if tok and tok in agent_ids and tok not in deps:
                     deps.append(tok)
         tool_name = extract(block, "tool_name") or None
+        agent_type = to_agent_type(extract(block, "agent_name") or extract(block, "agent_type") or "CoTAgent")
+        # File-tool agents carry their tool arguments as a JSON blob in
+        # ``<tool_args>{...}</tool_args>`` so the executor can forward
+        # them verbatim to the CLI. We accept malformed JSON gracefully
+        # (degrades to empty args) so a planner glitch doesn't blow up
+        # the whole plan parse.
+        tool_args: dict | None = None
+        if agent_type in FILE_TOOL_AGENT_TYPES:
+            raw_args = extract(block, "tool_args")
+            if raw_args:
+                try:
+                    tool_args = json.loads(raw_args)
+                    if not isinstance(tool_args, dict):
+                        tool_args = None
+                except (json.JSONDecodeError, ValueError):
+                    tool_args = None
+            tool_args = tool_args or {}
         agents.append(Agent(
             id=aid,
-            type=to_agent_type(extract(block, "agent_name") or extract(block, "agent_type") or "CoTAgent"),
+            type=agent_type,
             description=extract(block, "agent_description"),
             input=inp or extract(block, "agent_input"),
             depends_on=deps,
             tool_name=tool_name,
+            tool_args=tool_args,
         ))
 
     edges: list[Edge] = []

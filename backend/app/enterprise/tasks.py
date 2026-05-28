@@ -279,10 +279,76 @@ def list_tasks(domain: str | None = None) -> list[EnterpriseTask]:
 
 
 def get_task(task_id: str) -> EnterpriseTask:
+    # Custom (user-typed) tasks live in a separate in-process registry so
+    # they survive across /plan, /refine, /execute, /verify, etc.
+    if task_id in _CUSTOM_TASKS:
+        return _CUSTOM_TASKS[task_id]
     tasks = _load_all()
     if task_id not in tasks:
         raise KeyError(f"Unknown enterprise task: {task_id!r}")
     return tasks[task_id]
+
+
+# ─────────────────────────────────────────── custom (user-typed) tasks
+#
+# When the user types a free-form query in the picker the frontend POSTs
+# to /enterprise/custom-task; the backend synthesises an EnterpriseTask
+# that reuses the first available oracle task's gym wiring (seed SQL +
+# system prompt + tool catalog) so the sandbox is still seeded with
+# realistic data. The new task is stored in ``_CUSTOM_TASKS`` and looked
+# up by ``get_task`` like any other task.
+import uuid as _uuid
+
+_CUSTOM_TASKS: dict[str, EnterpriseTask] = {}
+
+
+def register_custom_task(
+    domain: str,
+    user_prompt: str,
+    all_tools: list[str] | None = None,
+) -> EnterpriseTask:
+    """Create + register an ephemeral in-process task from a user-typed
+    query. Returns the new task. Raises KeyError if the domain has no
+    oracle template to inherit gym wiring from.
+
+    Pass ``all_tools`` (typically the full live MCP catalog fetched by
+    the API layer) to enable every available tool by default. If
+    omitted, falls back to the UNION of every oracle task's tools in
+    the domain — usually a close approximation of the full catalog and
+    purely synchronous. Verifiers are empty (no ground-truth)."""
+    user_prompt = (user_prompt or "").strip()
+    if not user_prompt:
+        raise ValueError("user_prompt is required")
+    domain_tasks = [t for t in _load_all().values() if t.domain == domain]
+    if not domain_tasks:
+        raise KeyError(f"No template task available for domain {domain!r}")
+    template = domain_tasks[0]
+    if all_tools is None:
+        all_tools = []
+        seen: set[str] = set()
+        for t in domain_tasks:
+            for name in t.default_tools:
+                if name not in seen:
+                    seen.add(name)
+                    all_tools.append(name)
+    tid = f"custom.{domain}.{_uuid.uuid4().hex[:8]}"
+    title = _synthesize_title(user_prompt, fallback="Custom query") or "Custom query"
+    task = EnterpriseTask(
+        id=tid,
+        title=title,
+        summary=_synthesize_summary(user_prompt),
+        domain=domain,
+        user_prompt=user_prompt,
+        system_prompt=template.system_prompt,
+        seed_sql_path=template.seed_sql_path,
+        default_tools=all_tools,
+        context=dict(template.context),
+        verifiers=(),
+        featured=False,
+        source="custom",
+    )
+    _CUSTOM_TASKS[tid] = task
+    return task
 
 
 def task_count_by_domain() -> dict[str, int]:

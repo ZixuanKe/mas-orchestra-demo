@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MAS-Orchestra Demo</title>
+    <!-- Google Identity Services (Sign in with Google). Loaded async so
+         it never blocks first paint; useAuth waits for window.google
+         to materialize before initializing. Safe to ship even when
+         GOOGLE_CLIENT_ID is unset on the backend — the auth panel
+         simply hides the button. -->
+    <script async defer src="https://accounts.google.com/gsi/client"></script>
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-XGGV2V8EPP"></script>
     <script>
       window.dataLayer = window.dataLayer || [];

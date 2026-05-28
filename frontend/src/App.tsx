@@ -2,7 +2,12 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useOrchestration } from "./hooks/useOrchestration";
 import { GraphViewer } from "./components/GraphViewer";
 import { DatasetPicker } from "./components/DatasetPicker";
+import { AuthPanel } from "./components/AuthPanel";
+import { HistoryPanel } from "./components/HistoryPanel";
+import { useAuth } from "./hooks/useAuth";
+import type { UseAuth } from "./hooks/useAuth";
 import { ShareModal } from "./components/ShareModal";
+import { ContactModal } from "./components/ContactModal";
 import { EnterprisePicker } from "./components/EnterprisePicker";
 import { SandboxPanel } from "./components/SandboxPanel";
 import type { Dataset, DomLevel, Mode, SubagentModel, CustomAgentConfig, SubagentConfig, Agent, AgentType, AgentState, Plan, ChatMessage } from "./types";
@@ -30,6 +35,9 @@ const I = {
   Sparkle: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 2l2 7 7 2-7 2-2 7-2-7-7-2 7-2z"/></svg>,
   Share: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v14"/></svg>,
   Eye: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>,
+  ThumbUp: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M7 11V21H4a1 1 0 01-1-1v-8a1 1 0 011-1h3zM7 11l4-7a3 3 0 013 3v3h5.4a2 2 0 011.98 2.3l-1.2 8A2 2 0 0118.2 21H7"/></svg>,
+  ThumbDown: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M17 13V3h3a1 1 0 011 1v8a1 1 0 01-1 1h-3zM17 13l-4 7a3 3 0 01-3-3v-3H4.6a2 2 0 01-1.98-2.3l1.2-8A2 2 0 015.8 3H17"/></svg>,
+  Plus: (p: { className?: string }) => <svg {...p} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>,
 };
 
 /* ────────────────────────────────────────────────────────────────
@@ -41,6 +49,7 @@ const TYPE_COLOR: Record<AgentType, string> = {
   DebateAgent: "#f59e0b",
   ReflexionAgent: "#10b981",
   WebSearchAgent: "#ef4444",
+  ExtractAgent: "#14b8a6",              // teal-500 — extracts fields from context
   CustomAgent: "#ec4899",
   MCPAgent: "#0ea5e9",                  // sky-500 — enterprise per-tool agent
   EnterpriseExecutorAgent: "#6366f1",   // indigo-500 — enterprise summarizer
@@ -56,6 +65,7 @@ function TopBar({
   showGraphToggle,
   canShare,
   onShare,
+  onContact,
   isShared,
   onExitShared,
 }: {
@@ -65,6 +75,7 @@ function TopBar({
   showGraphToggle: boolean;
   canShare: boolean;
   onShare: () => void;
+  onContact: () => void;
   isShared: boolean;
   onExitShared: () => void;
 }) {
@@ -129,6 +140,14 @@ function TopBar({
           className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 px-2.5 py-1.5 rounded-md hover:bg-gray-100">
           <I.Globe className="w-3.5 h-3.5" /> Project
         </a>
+        <button
+          onClick={onContact}
+          title="Send us comments, suggestions, or bug reports"
+          className="flex items-center gap-1.5 text-xs text-pink-700 hover:text-pink-900 hover:bg-pink-50/70 px-2.5 py-1.5 rounded-md font-medium border border-pink-200/60 bg-pink-50/30"
+        >
+          <span className="text-sm leading-none">💌</span>
+          Contact us
+        </button>
         {showGraphToggle && (
           <button onClick={onToggleRight} className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500" title="Toggle graph panel">
             <I.Panel className="w-4 h-4" />
@@ -232,6 +251,10 @@ function LeftSidebar({
   subagentModel, onSubagentChange,
   disabled,
   enterpriseAgents,
+  onNewChat, hasConversation,
+  auth,
+  historyTick, onOpenHistory, activeHistoryId,
+  hiddenHistoryIds, onHideHistory,
 }: {
   mode: Mode; onModeChange: (m: Mode) => void;
   dom: DomLevel; onDomChange: (d: DomLevel) => void;
@@ -242,6 +265,29 @@ function LeftSidebar({
    *  the actual per-tool agents (e.g. ``CreateCalendarAgent``) for the
    *  selected task / live plan rather than a single anonymous "MCPAgent". */
   enterpriseAgents?: { type: string; description: string; color: string }[];
+  /** Reset everything and return to the empty composer. Available
+   *  any time — ChatGPT-style "New chat" affordance. */
+  onNewChat: () => void;
+  /** Tells the button whether there's anything to discard; used to
+   *  keep the styling subtle when the user is already on a blank state. */
+  hasConversation: boolean;
+  /** Auth context lifted up by App so it stays in sync with the
+   *  TopBar (avatar) and trajectory annotations. Drives the
+   *  AuthPanel pinned to the sidebar bottom. */
+  auth: UseAuth;
+  /** Bumped by App after every successful createShare so the
+   *  HistoryPanel re-fetches /users/me/shares right away. */
+  historyTick: number;
+  /** Click handler the HistoryPanel calls when the user picks a
+   *  past conversation. Loads the share editably. */
+  onOpenHistory: (shareId: string) => void;
+  /** Currently-loaded history item (for highlight). */
+  activeHistoryId: string | null;
+  /** Frontend-only hidden-share ids (per-user, persisted to
+   *  localStorage). Filtered out of the Recents rail. */
+  hiddenHistoryIds: ReadonlySet<string>;
+  /** Remove a share id from the Recents rail (frontend only). */
+  onHideHistory: (shareId: string) => void;
 }) {
   const enterpriseLegend = (enterpriseAgents && enterpriseAgents.length > 0)
     ? enterpriseAgents
@@ -249,8 +295,42 @@ function LeftSidebar({
         ...a,
         color: TYPE_COLOR[a.type as AgentType] || "#9ca3af",
       }));
+  // Confirm before clobbering a non-empty conversation — we don't
+  // want a stray click to throw away an in-progress design + chat.
+  const handleNewChat = () => {
+    if (hasConversation) {
+      const ok = window.confirm("Start a new chat? The current conversation will be cleared.");
+      if (!ok) return;
+    }
+    onNewChat();
+  };
   return (
-    <div className="h-full w-60 p-4 space-y-5 overflow-y-auto">
+    <div className="h-full w-60 flex flex-col">
+      {/* Three stacked regions:
+            1. Controls — capped scroll area at the top (max ~55% of
+               sidebar height) so long agent-type lists scroll within
+               themselves instead of pushing Recents off-screen.
+            2. HistoryPanel — fills remaining vertical space when the
+               user is signed in (renders nothing for guests).
+            3. AuthPanel — always pinned to the bottom.
+          When signed-out the controls region just grows to fill the
+          space the missing history would have taken. */}
+      <div className="flex-none overflow-y-auto p-4 space-y-5 max-h-[55%] border-b border-gray-100">
+      {/* ChatGPT-style "New chat" — pinned to the top so it's always
+          reachable, regardless of which mode / stage the user is in. */}
+      <button
+        onClick={handleNewChat}
+        title="Start a new conversation"
+        className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+          hasConversation
+            ? "border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/40 text-gray-800"
+            : "border-dashed border-gray-200 bg-gray-50/50 text-gray-500 hover:bg-gray-100/70"
+        }`}
+      >
+        <I.Plus className="w-3.5 h-3.5" />
+        <span>New chat</span>
+      </button>
+
       <div>
         <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Reasoning</div>
         <div className="space-y-1">
@@ -350,6 +430,25 @@ function LeftSidebar({
               ))}
         </div>
       </details>
+      </div>
+
+      {/* Recents — fills the remaining vertical space between the
+          controls and the AuthPanel. Renders nothing for guests so
+          the controls region simply gets the room instead. */}
+      <div className="flex-1 min-h-0">
+        <HistoryPanel
+          userSub={auth.user?.sub ?? null}
+          refreshTick={historyTick}
+          onOpen={onOpenHistory}
+          activeShareId={activeHistoryId}
+          hiddenIds={hiddenHistoryIds}
+          onHide={onHideHistory}
+        />
+      </div>
+
+      {/* Account widget pinned to the sidebar bottom (ChatGPT-style).
+          Shows "Guest" until the user signs in with Google. */}
+      <AuthPanel auth={auth} />
     </div>
   );
 }
@@ -451,7 +550,7 @@ function EmptyState({
   mode, dom, onDomChange,
   problem, onProblemChange,
   expected, onExpectedChange,
-  onSubmitCustom, onSubmitDataset, onSubmitEnterprise, onPreviewEnterprise,
+  onSubmitCustom, onSubmitDataset, onSubmitEnterprise, onPreviewEnterprise, onPreviewEnterpriseDomain,
   isLoading,
 }: {
   mode: Mode; dom: DomLevel; onDomChange: (d: DomLevel) => void;
@@ -461,6 +560,7 @@ function EmptyState({
   onSubmitDataset: (q: string, a: string) => void;
   onSubmitEnterprise: (task: import("./types").EnterpriseTask, enabledTools: string[], dom: DomLevel) => void;
   onPreviewEnterprise: (task: import("./types").EnterpriseTask) => void;
+  onPreviewEnterpriseDomain: (domain: string) => void;
   isLoading: boolean;
 }) {
   const canSubmit = problem.trim().length > 0 && !isLoading;
@@ -472,13 +572,13 @@ function EmptyState({
       <div className="min-h-full flex flex-col items-center justify-center px-5 py-10">
         <div className="max-w-2xl w-full text-center mb-6">
           <h1 className="text-3xl font-semibold text-gray-900 tracking-tight mb-2">
-            {isEnterprise ? "Pick an EnterpriseOps task"
+            {isEnterprise ? "What should Orchestra do?"
               : isDataset ? "Pick a question to solve"
               : "What should Orchestra solve?"}
           </h1>
           <p className="text-sm text-gray-500">
             {isEnterprise
-              ? "Orchestra plans a DAG of tool-using agents and runs them against a live sandbox. Watch the database change in the panel on the right."
+              ? "Pick an environment, describe what you want done. Orchestra plans a DAG of tool-using agents and runs them against the live sandbox on the right."
               : isDataset
               ? "Orchestra designs a multi-agent plan for the selected problem, then lets you refine it in chat."
               : "Describe a problem. Orchestra designs a multi-agent plan, executes it, and lets you refine in chat."}
@@ -487,7 +587,14 @@ function EmptyState({
 
         {isEnterprise ? (
           <div className="max-w-2xl w-full">
-            <EnterprisePicker dom={dom} onDomChange={onDomChange} isLoading={isLoading} onPreview={onPreviewEnterprise} onSubmit={onSubmitEnterprise} />
+            <EnterprisePicker
+              dom={dom}
+              onDomChange={onDomChange}
+              isLoading={isLoading}
+              onDomainPreview={onPreviewEnterpriseDomain}
+              onPreview={onPreviewEnterprise}
+              onSubmit={onSubmitEnterprise}
+            />
           </div>
         ) : !isDataset ? (
           <div className="max-w-2xl w-full">
@@ -944,6 +1051,7 @@ function AssistantPlanTurn({
   onUpdateCustom, onUpdateSub,
   onViewGraph, locked,
   isLatestPlan, stage, isExecuting, canRun, onRun,
+  feedback, feedbackComment, onSetFeedback,
 }: {
   content: string;
   plan: Plan;
@@ -960,6 +1068,11 @@ function AssistantPlanTurn({
   isExecuting: boolean;
   canRun: boolean;
   onRun: () => void;
+  /** Current thumbs-up/down annotation on THIS plan turn. */
+  feedback?: "up" | "down" | null;
+  feedbackComment?: string;
+  /** Persist a new rating. ``undefined`` in read-only / shared views. */
+  onSetFeedback?: (rating: "up" | "down" | null, comment?: string) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const agents = plan.graph.agents;
   const isDirect = !!plan.graph.direct_solution;
@@ -1118,6 +1231,23 @@ function AssistantPlanTurn({
             )}
           </div>
         )}
+
+        {/* Thumbs up/down rating for the plan turn — placed BELOW the
+            plan card so it sits alongside the other affordances at
+            roughly the same height as the answer turn's toolbar. We
+            show it on every plan (latest and historical) so users can
+            grade older drafts too — useful signal for the offline
+            refinement pipeline. */}
+        {onSetFeedback && (
+          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+            <FeedbackToolbar
+              feedback={feedback ?? null}
+              comment={feedbackComment ?? ""}
+              onSet={onSetFeedback}
+            />
+            <span className="text-[11px] text-gray-400 ml-1">Rate this plan design</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1240,6 +1370,7 @@ function AssistantMessageTurn({ content }: { content: string }) {
 function AssistantAnswerTurn({
   answer, onCopy, onRerun, isExecuting, versionLabel, isLatest,
   verifierCount, onRunVerifier, isVerifying, verifierResult,
+  feedback, feedbackComment, onSetFeedback,
 }: {
   answer: string;
   onCopy: () => void; onRerun: () => void;
@@ -1258,6 +1389,11 @@ function AssistantAnswerTurn({
    *  is in its initial neutral state. When set, the button reflects the
    *  pass/fail summary with a check / × icon and color. */
   verifierResult?: import("./types").VerifierRunResponse | null;
+  /** Current thumbs-up/down annotation (null = not yet rated). */
+  feedback?: "up" | "down" | null;
+  feedbackComment?: string;
+  /** Persist a new rating. ``undefined`` in read-only / shared views. */
+  onSetFeedback?: (rating: "up" | "down" | null, comment?: string) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [open, setOpen] = useState(isLatest);
   useEffect(() => { setOpen(isLatest); }, [isLatest]);
@@ -1345,10 +1481,175 @@ function AssistantAnswerTurn({
                 </button>
               );
             })()}
+            {/* Thumbs up/down rating — pinned to the right so it's
+                discoverable next to Re-run / Copy / Verifier. Available
+                on EVERY answer turn (latest or older). Triggers a
+                persist to /feedback/trajectory which writes the full
+                untruncated history + configs into mas_refine. */}
+            {onSetFeedback && (
+              <FeedbackToolbar
+                feedback={feedback ?? null}
+                comment={feedbackComment ?? ""}
+                onSet={onSetFeedback}
+              />
+            )}
             {isLatest && <span className="text-[11px] text-gray-400 ml-auto">Ask in the composer below to refine.</span>}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+   FeedbackToolbar — ChatGPT-style 👍 / 👎 on an assistant turn.
+   Auto-opens a comment popover the FIRST time the user rates (no
+   separate "add note" button — keeps the toolbar minimal). The
+   popover can be skipped; after dismissal the rating is persisted
+   exactly once with whatever the user typed (or empty).
+   ──────────────────────────────────────────────────────────────── */
+function FeedbackToolbar({
+  feedback, comment, onSet,
+}: {
+  feedback: "up" | "down" | null;
+  comment?: string;
+  onSet: (rating: "up" | "down" | null, comment?: string) => Promise<{ ok: boolean; error?: string }>;
+}) {
+  const [busy, setBusy] = useState<"up" | "down" | "clear" | null>(null);
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  // Auto-popover. Opens after a fresh vote (only when there's no
+  // existing comment to avoid surprising users who already wrote one).
+  // Closed by Skip / Save / click-outside.
+  const [open, setOpen] = useState<"up" | "down" | null>(null);
+  const [draft, setDraft] = useState(comment ?? "");
+  const popRef = useRef<HTMLDivElement>(null);
+
+  // Keep the draft synced when ``comment`` changes from outside
+  // (shared-snapshot rehydration, mostly).
+  useEffect(() => { setDraft(comment ?? ""); }, [comment]);
+
+  // Click-outside dismisses the popover (the rating is already saved
+  // at this point, so no data is lost).
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) setOpen(null);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const fadeToast = (kind: "ok" | "err", msg: string) => {
+    setToast({ kind, msg });
+    setTimeout(() => setToast(null), 2200);
+  };
+
+  /** Click thumb → persist immediately. Same thumb again → clear.
+   *  After a fresh vote (no existing comment) the popover opens to
+   *  invite optional context. */
+  const handleVote = async (rating: "up" | "down") => {
+    if (busy) return;
+    const next = feedback === rating ? null : rating;
+    setBusy(next ?? "clear");
+    const res = await onSet(next, next ? (comment ?? "") : "");
+    setBusy(null);
+    if (!res.ok) {
+      fadeToast("err", res.error || "Failed to save");
+      return;
+    }
+    fadeToast("ok", next === null ? "Cleared" : `Saved ${next === "up" ? "👍" : "👎"} — thanks!`);
+    if (next && !comment) setOpen(next); // first-time invite for context
+    else setOpen(null);
+  };
+
+  /** Save the comment without changing the rating. */
+  const submitComment = async () => {
+    if (!feedback || busy) return;
+    setBusy(feedback);
+    const res = await onSet(feedback, draft);
+    setBusy(null);
+    if (!res.ok) fadeToast("err", res.error || "Failed to save");
+    else { fadeToast("ok", "Comment saved"); setOpen(null); }
+  };
+
+  const upActive = feedback === "up";
+  const downActive = feedback === "down";
+
+  return (
+    <div className="relative inline-flex items-center gap-0.5">
+      <button
+        onClick={() => handleVote("up")}
+        disabled={!!busy}
+        className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors ${
+          upActive
+            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+            : "bg-white border-gray-200 text-gray-500 hover:text-emerald-700 hover:bg-emerald-50 hover:border-emerald-200"
+        } ${busy === "up" ? "opacity-60" : ""}`}
+        title={upActive ? "You rated this helpful — click to undo" : "Good answer"}
+        aria-pressed={upActive}
+      >
+        <I.ThumbUp className="w-3.5 h-3.5" />
+      </button>
+      <button
+        onClick={() => handleVote("down")}
+        disabled={!!busy}
+        className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md border transition-colors ${
+          downActive
+            ? "border-rose-300 bg-rose-50 text-rose-700"
+            : "bg-white border-gray-200 text-gray-500 hover:text-rose-700 hover:bg-rose-50 hover:border-rose-200"
+        } ${busy === "down" ? "opacity-60" : ""}`}
+        title={downActive ? "You rated this poor — click to undo" : "Could be better"}
+        aria-pressed={downActive}
+      >
+        <I.ThumbDown className="w-3.5 h-3.5" />
+      </button>
+      {toast && (
+        <span
+          className={`ml-1.5 text-[11px] px-1.5 py-0.5 rounded ${
+            toast.kind === "ok"
+              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+              : "bg-rose-50 text-rose-700 border border-rose-200"
+          }`}
+          role="status"
+        >
+          {toast.msg}
+        </span>
+      )}
+      {open && (
+        <div
+          ref={popRef}
+          className="absolute top-full left-0 mt-1 z-30 w-[22rem] max-w-[80vw] rounded-lg border border-gray-200 bg-white shadow-lg p-3"
+        >
+          <div className="text-[11px] text-gray-500 mb-1.5 flex items-center gap-1.5">
+            <span>{open === "up" ? "👍 What worked?" : "👎 What was off?"}</span>
+            <span className="text-gray-300">·</span>
+            <span className="text-gray-400">Helps us improve the next iteration.</span>
+          </div>
+          <textarea
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            placeholder={open === "up" ? "e.g. correct, well-cited, the plan was easy to follow…" : "e.g. wrong tool picked, missed an edge case, hallucinated an entity…"}
+            rows={3}
+            className="w-full text-xs px-2 py-1.5 border border-gray-200 rounded-md outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-300 resize-y min-h-[3.5rem]"
+            autoFocus
+          />
+          <div className="flex items-center justify-end gap-1.5 mt-1.5">
+            <button
+              onClick={() => setOpen(null)}
+              className="text-[11px] px-2 py-1 rounded-md border border-gray-200 hover:bg-gray-50 text-gray-600"
+            >
+              Skip
+            </button>
+            <button
+              onClick={submitComment}
+              disabled={!!busy}
+              className="text-[11px] px-2.5 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1366,6 +1667,7 @@ function ChatSpine({
   stage, canRun, onRun,
   readOnly,
   verifierCount, onRunVerifier, isVerifying,
+  onSetMessageFeedback,
 }: {
   messages: ChatMessage[];
   agentStates: Record<string, AgentState>;
@@ -1387,6 +1689,10 @@ function ChatSpine({
   verifierCount?: number;
   onRunVerifier?: () => void;
   isVerifying?: boolean;
+  /** Per-turn thumbs-up/down handler. Receives the message index in
+   *  ``messages``. Omitted in read-only / shared views. */
+  onSetMessageFeedback?: (turnIndex: number, rating: "up" | "down" | null, comment?: string) =>
+    Promise<{ ok: boolean; error?: string }>;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -1436,6 +1742,11 @@ function ChatSpine({
                 isExecuting={isLatestPlan && isExecuting}
                 canRun={canRun || stage === "result"}
                 onRun={onRun}
+                feedback={msg.feedback ?? null}
+                feedbackComment={msg.feedbackComment ?? ""}
+                onSetFeedback={onSetMessageFeedback && !readOnly
+                  ? (rating, comment) => onSetMessageFeedback(i, rating, comment)
+                  : undefined}
               />
             ) : msg.isAnswer ? (
               <AssistantAnswerTurn
@@ -1449,6 +1760,11 @@ function ChatSpine({
                 onRunVerifier={isLatestAnswer && !readOnly ? onRunVerifier : undefined}
                 isVerifying={isLatestAnswer ? isVerifying : false}
                 verifierResult={isLatestAnswer ? latestVerifierRun : null}
+                feedback={msg.feedback ?? null}
+                feedbackComment={msg.feedbackComment ?? ""}
+                onSetFeedback={onSetMessageFeedback && !readOnly
+                  ? (rating, comment) => onSetMessageFeedback(i, rating, comment)
+                  : undefined}
               />
             ) : msg.verifierRun ? (
               <VerifierTurn run={msg.verifierRun} />
@@ -1693,12 +2009,15 @@ export default function App() {
     subagentModel, chatMessages, undoStack, redoStack, customAgents, subagentConfigs,
     pendingQueue, isShared,
     enterpriseTaskId, enterpriseTask, sandboxSnapshot, sandboxDiffs, sandboxStatus, isVerifying,
-    generatePlan, generateEnterprisePlan, previewEnterpriseTask, clearSandboxPreview,
+    generatePlan, generateEnterprisePlan, previewEnterpriseTask, previewEnterpriseDomain, clearSandboxPreview,
     runVerifier,
     executePlan, cancelExecution, cancelRefine, undoPlan, redoPlan,
     queueRefine, editQueued, removeQueued,
     switchToPlan, updateCustomAgent, updateSubagentConfig, setSubagentModel, reset,
     createShare, exitSharedMode,
+    openHistoryItem,
+    liveConversationId, historyVersion,
+    setMessageFeedback,
   } = orch;
 
   const planHistory: Plan[] = chatMessages.filter(m => m.plan).map(m => m.plan!);
@@ -1709,6 +2028,140 @@ export default function App() {
   const [chatInput, setChatInput] = useState("");
   const [expandedGraph, setExpandedGraph] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [contactOpen, setContactOpen] = useState(false);
+
+  // Auth context — kept here (not inside LeftSidebar) so future work
+  // can attach the signed-in user's profile to trajectory annotations,
+  // share payloads, and the contact form without prop-drilling.
+  const auth = useAuth();
+
+  // Bumped to force the HistoryPanel to re-fetch /users/me/shares.
+  // Triggered after the user creates a new share so the new item
+  // shows up in the Recents rail immediately, and when the user
+  // signs in/out (separately handled inside HistoryPanel via userSub).
+  const [historyTick, setHistoryTick] = useState(0);
+  // Tracks which history item is currently loaded into the workspace
+  // so the Recents rail can highlight it. Cleared by handleReset.
+  const [activeHistoryId, setActiveHistoryId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("share");
+  });
+
+  // Optimistic "just-hidden" set so the row disappears immediately on
+  // click, before the next /users/me/shares fetch lands. The backend
+  // is the source of truth (POST /users/me/shares/{id}/hide writes
+  // to users.db / hidden_shares.csv) — this set just bridges the gap
+  // between the click and the refetch so the UI doesn't appear stuck.
+  //
+  // We DON'T persist this set to localStorage: a hide that survives a
+  // browser reload is exactly what the server-side filter already
+  // provides, and persisting locally would force us to expire entries
+  // by hand as the server-side state evolves.
+  const [hiddenHistoryIds, setHiddenHistoryIds] = useState<Set<string>>(new Set());
+  // Drop the optimistic set whenever the user switches (sub change)
+  // so we start fresh against the new account's server-side filter.
+  useEffect(() => {
+    setHiddenHistoryIds(new Set());
+  }, [auth.user?.sub]);
+
+  const handleHideHistory = useCallback((shareId: string) => {
+    const sub = auth.user?.sub;
+    if (!sub) return;
+    // Optimistic UI: drop the row instantly. If the POST fails we put
+    // it back — the user gets a passive error in the console; the row
+    // re-appears on the next refetch anyway.
+    setHiddenHistoryIds(prev => {
+      if (prev.has(shareId)) return prev;
+      const next = new Set(prev);
+      next.add(shareId);
+      return next;
+    });
+    setActiveHistoryId(prev => prev === shareId ? null : prev);
+    // Persist server-side so the hide sticks across browsers /
+    // localStorage wipes. Fire-and-forget — we already updated the UI.
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/users/me/shares/${encodeURIComponent(shareId)}/hide?sub=${encodeURIComponent(sub)}`,
+          { method: "POST" },
+        );
+        if (!res.ok) {
+          // Roll back the optimistic update and bump the tick so the
+          // Recents rail re-fetches the truth.
+          setHiddenHistoryIds(prev => {
+            if (!prev.has(shareId)) return prev;
+            const next = new Set(prev);
+            next.delete(shareId);
+            return next;
+          });
+          setHistoryTick(t => t + 1);
+        }
+      } catch {
+        setHiddenHistoryIds(prev => {
+          if (!prev.has(shareId)) return prev;
+          const next = new Set(prev);
+          next.delete(shareId);
+          return next;
+        });
+        setHistoryTick(t => t + 1);
+      }
+    })();
+  }, [auth.user?.sub]);
+
+  // Wrap createShare so a successful save refreshes the Recents rail
+  // immediately (rather than waiting for the user to reload).
+  const handleCreateShare = useCallback(async () => {
+    const result = await createShare();
+    if (result) {
+      setHistoryTick(t => t + 1);
+      setActiveHistoryId(result.id);
+    }
+    return result;
+  }, [createShare]);
+
+  // Force a fresh history fetch on every sign-in / sign-out so the
+  // Recents rail never lingers on a stale user's data and so a
+  // brand-new login immediately pulls in their server-side history.
+  useEffect(() => {
+    setHistoryTick(t => t + 1);
+  }, [auth.user?.sub]);
+
+  // Auto-save bumps ``historyVersion`` from inside useOrchestration
+  // every time the conversation is silently upserted. Mirror that into
+  // the existing historyTick so the Recents rail re-fetches and shows
+  // the freshly-saved row (or its updated snippet) immediately.
+  useEffect(() => {
+    if (historyVersion === 0) return;
+    setHistoryTick(t => t + 1);
+  }, [historyVersion]);
+
+  // Adopt the auto-saved id as the active row so the Recents rail
+  // highlights the conversation the user is currently editing. Once
+  // it's set we leave it alone — manual share / openHistory paths
+  // already keep it in sync via handleCreateShare / handleOpenHistory.
+  useEffect(() => {
+    if (liveConversationId && liveConversationId !== activeHistoryId) {
+      setActiveHistoryId(liveConversationId);
+    }
+    // We only react to ``liveConversationId`` changes — adding
+    // ``activeHistoryId`` would cause a feedback loop when the user
+    // clicks a history row.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveConversationId]);
+
+  // Click-to-load from the Recents rail. Confirm before clobbering an
+  // in-progress conversation, then swap to the chosen snapshot in
+  // editable mode (NOT read-only "share" mode).
+  const handleOpenHistory = useCallback(async (shareId: string) => {
+    if (shareId === activeHistoryId) return;
+    const hasWork = chatMessages.length > 0;
+    if (hasWork) {
+      const ok = window.confirm("Switch to this conversation? Your current chat will be replaced.");
+      if (!ok) return;
+    }
+    const ok = await openHistoryItem(shareId);
+    if (ok) setActiveHistoryId(shareId);
+  }, [activeHistoryId, chatMessages.length, openHistoryItem]);
 
   // Resizable right (graph) panel — persisted across reloads.
   const RIGHT_DEFAULT = 340;
@@ -1800,7 +2253,14 @@ export default function App() {
 
   const submitDataset = (question: string, answer: string) => {
     const dataset = input.mode as Dataset;
-    const dom = DATASETS.find(d => d.value === dataset)?.dom ?? "high";
+    // All reasoning datasets are pinned to their training DoM via the
+    // DATASETS table — AIME → low (math), Hotpot → high (hotpotqa),
+    // BrowseComp → high (browsecomp), MASBench → high_extensive
+    // (browsecomp). The DoM toggle is hidden for these modes; the
+    // backend re-pins the same value via DATASET_META regardless of
+    // what we send, but we keep this so the displayed plan label is
+    // consistent with what the planner used.
+    const dom: DomLevel = DATASETS.find(d => d.value === dataset)?.dom ?? "high";
     generatePlan(question, dataset, dom, answer);
   };
 
@@ -1888,6 +2348,8 @@ export default function App() {
     reset();
     setInput({ problem: "", expected: "", mode: "custom", dom: "high" });
     setChatInput("");
+    // Drop the active-history highlight too — we're starting fresh.
+    setActiveHistoryId(null);
   };
 
   const canExecute = !isShared && !!plan && !isLoading && !isRefining && stage === "plan";
@@ -1902,6 +2364,7 @@ export default function App() {
         showGraphToggle={hasConversation && !!graph && !expandedGraph}
         canShare={canShare}
         onShare={() => setShareOpen(true)}
+        onContact={() => setContactOpen(true)}
         isShared={isShared}
         onExitShared={exitSharedMode}
       />
@@ -1909,11 +2372,26 @@ export default function App() {
       <ShareModal
         open={shareOpen}
         onClose={() => setShareOpen(false)}
-        onCreate={createShare}
+        onCreate={handleCreateShare}
         summary={{
           problem: orchProblem,
           agentCount: plan?.graph.agents.length ?? 0,
           hasAnswer: !!finalAnswer,
+        }}
+      />
+
+      <ContactModal
+        open={contactOpen}
+        onClose={() => setContactOpen(false)}
+        contextSnapshot={{
+          mode: input.mode,
+          dom: input.dom,
+          enterprise_task_id: enterpriseTaskId,
+          enterprise_domain: enterpriseTask?.domain,
+          agentCount: plan?.graph.agents.length ?? 0,
+          stage,
+          hasAnswer: !!finalAnswer,
+          url: typeof window !== "undefined" ? window.location.href : "",
         }}
       />
 
@@ -1929,6 +2407,14 @@ export default function App() {
             onSubagentChange={setSubagentModel}
             disabled={hasConversation}
             enterpriseAgents={enterpriseAgents}
+            onNewChat={handleReset}
+            hasConversation={hasConversation}
+            auth={auth}
+            historyTick={historyTick}
+            onOpenHistory={handleOpenHistory}
+            activeHistoryId={activeHistoryId}
+            hiddenHistoryIds={hiddenHistoryIds}
+            onHideHistory={handleHideHistory}
           />
         </aside>
 
@@ -1957,6 +2443,7 @@ export default function App() {
               onSubmitDataset={submitDataset}
               onSubmitEnterprise={submitEnterprise}
               onPreviewEnterprise={previewEnterpriseTask}
+              onPreviewEnterpriseDomain={previewEnterpriseDomain}
               isLoading={isLoading}
             />
           ) : expandedGraph && graph ? (
@@ -2004,6 +2491,7 @@ export default function App() {
                 verifierCount={enterpriseTask?.verifier_count}
                 onRunVerifier={runVerifier}
                 isVerifying={isVerifying}
+                onSetMessageFeedback={setMessageFeedback}
               />
               {!isShared && (
                 <Composer

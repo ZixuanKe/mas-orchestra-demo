@@ -1,6 +1,18 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { Graph, AgentState, Dataset, DomLevel, Plan, Stage, SubagentModel, CustomAgentConfig, SubagentConfig, ChatMessage, ShareSnapshot, EnterpriseTask, SandboxSnapshot, SandboxDiff, VerifierRunResponse } from "../types";
+import { readStoredAuthUser } from "./useAuth";
 import { track } from "../analytics";
+
+/** Generate a session-stable trajectory id. crypto.randomUUID where
+ *  available, with a Math.random fallback for old browsers. */
+function _newTrajectoryId(): string {
+  const cr = typeof crypto !== "undefined" ? crypto : undefined;
+  if (cr && typeof (cr as Crypto).randomUUID === "function") {
+    return `traj-${(cr as Crypto).randomUUID()}`;
+  }
+  const rnd = Math.random().toString(36).slice(2, 10);
+  return `traj-${Date.now().toString(36)}-${rnd}`;
+}
 
 interface State {
   stage: Stage;
@@ -63,6 +75,42 @@ export function useOrchestration() {
   const [undoStack, setUndoStack] = useState<Snapshot[]>([]);
   const [redoStack, setRedoStack] = useState<Snapshot[]>([]);
   const [pendingQueue, setPendingQueue] = useState<string[]>([]);
+  // Stable id for THIS browser session's trajectory — so a thumbs-up
+  // on turn 5 and a thumbs-down on turn 7 in the same chat are joined
+  // by ``trajectory_id`` in mas_refine/trajectories.{csv,db}.
+  // Reset by ``reset()`` so a fresh conversation gets its own id.
+  const trajectoryIdRef = useRef<string>(_newTrajectoryId());
+
+  // ── Auto-save / Recents wiring ─────────────────────────────────────
+  // The id of the share record this conversation is being auto-saved
+  // to. ``null`` until the first successful POST /share — after that
+  // every meaningful turn upserts to the SAME id, so a single chat is
+  // ONE row in the user's Recents rail (not one row per turn).
+  //
+  // Set by:
+  //   • the first successful auto-save (backend allocates the id and we
+  //     remember it for subsequent upserts)
+  //   • a manual ``createShare()`` (the user clicked the Share button)
+  //   • ``openHistoryItem(id)`` so continuing a loaded conversation
+  //     keeps writing back to the same record (not a duplicate)
+  //
+  // Cleared by ``reset()`` so the next conversation gets a fresh id.
+  const liveConversationIdRef = useRef<string | null>(null);
+  // Mirrored as state so React components (App → LeftSidebar → Recents)
+  // can re-render and highlight the active row.
+  const [liveConversationId, setLiveConversationId] = useState<string | null>(null);
+  // Bumped after every successful save (auto or manual). App.tsx watches
+  // it to refetch the Recents list so the row's snippet/title stays in
+  // sync as the conversation evolves.
+  const [historyVersion, setHistoryVersion] = useState(0);
+  // Debounce timer for auto-saves. We coalesce bursts of state changes
+  // (chat append → plan update → final answer arrival) into a single
+  // POST after the last burst settles, to avoid flooding the backend
+  // during streaming.
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True while an auto-save POST is in flight — gates the debounced
+  // trigger so we don't pile requests on a slow disk / large payload.
+  const autoSavingRef = useRef(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const refineAbortRef = useRef<AbortController | null>(null);
@@ -176,6 +224,47 @@ export function useOrchestration() {
     }
   }, []);
 
+  /** Preview the sandbox for a DOMAIN without a specific task — fired
+   *  the moment the user picks a domain in the EnterprisePicker, so the
+   *  5th column AppView appears immediately and the user can see what
+   *  the environment looks like before writing any query.
+   *
+   *  Uses the first oracle task in the domain to seed a representative
+   *  sandbox (cached per-domain server-side). Safe to call repeatedly. */
+  const previewEnterpriseDomain = useCallback(async (domain: string) => {
+    if (stateRef.current.stage === "execute" && stateRef.current.isLoading) return;
+    // Don't clobber a task-specific preview that the user has already
+    // triggered for this same domain — task-level snapshots are richer
+    // (specific seed) and we don't want to flicker back to the generic
+    // domain template.
+    const cur = stateRef.current;
+    if (cur.enterpriseTask?.domain === domain && cur.sandboxSnapshot) return;
+    setState(s => ({
+      ...s,
+      enterpriseTask: null,
+      sandboxStatus: "Loading sandbox…",
+      sandboxDiffs: [],
+    }));
+    try {
+      const res = await fetch(`/enterprise/preview-snapshot/${encodeURIComponent(domain)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const snap: SandboxSnapshot = await res.json();
+      setState(s => (
+        // Race-safe: only apply if no task-level preview happened in the
+        // meantime AND the user hasn't switched away to a different domain.
+        (!s.enterpriseTask && snap.domain === domain)
+          ? { ...s, sandboxSnapshot: snap, sandboxStatus: null }
+          : s
+      ));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const aborted = (err instanceof DOMException && err.name === "AbortError")
+        || /aborted|abort|Failed to fetch|NetworkError/i.test(msg);
+      if (aborted) return;
+      setState(s => ({ ...s, sandboxStatus: `Sandbox preview failed: ${msg}` }));
+    }
+  }, []);
+
   /** Clear sandbox preview state — call when the user switches away from
    *  enterprise mode so the 5th column doesn't linger. */
   const clearSandboxPreview = useCallback(() => {
@@ -196,7 +285,12 @@ export function useOrchestration() {
       enterpriseTaskId: task.id,
       enterpriseTask: task,
       enabledTools,
-      sandboxSnapshot: null,
+      // Preserve the preview snapshot fetched by ``previewEnterpriseTask``
+      // when the user picked this task — keeps the 5th sandbox column
+      // visible during planning instead of blanking it out. We only reset
+      // run-side state (diffs / status). When the planner responds we
+      // overwrite ``sandboxSnapshot`` with ``initial_snapshot`` from the
+      // backend (which is the authoritative "before" view for the run).
       sandboxDiffs: [],
       sandboxStatus: null,
     }));
@@ -236,8 +330,10 @@ export function useOrchestration() {
         ...s, stage: "plan", plan, graph: plan.graph, agentStates,
         finalAnswer: null, isLoading: false,
         // Surface the seeded sandbox right after planning so the user can
-        // study the "before" state before clicking Run.
-        sandboxSnapshot: initial_snapshot || null,
+        // study the "before" state before clicking Run. Fall back to the
+        // preview snapshot if the planner didn't return one — keeps the
+        // 5th column populated rather than collapsing it.
+        sandboxSnapshot: initial_snapshot ?? s.sandboxSnapshot,
       }));
     } catch (err) {
       setState(s => ({ ...s, error: String(err), isLoading: false }));
@@ -251,6 +347,9 @@ export function useOrchestration() {
     setRedoStack([]);
     track("plan_generated", { mode: dataset ?? "custom", dom, problem_length: problem.length });
     try {
+      // Reasoning datasets are pinned to their training DoM by the
+      // backend via DATASET_META, so the body just needs ``dataset``.
+      // Custom problems (no dataset) honor the user's DoM toggle.
       const body = dataset ? { problem, dataset } : { problem, dom };
       const res = await fetch("/plan", {
         method: "POST",
@@ -574,15 +673,150 @@ export function useOrchestration() {
 
   const setSubagentModel = useCallback((subagentModel: SubagentModel) => setState(s => ({ ...s, subagentModel })), []);
   const goToStage = useCallback((stage: Stage) => setState(s => ({ ...s, stage, error: null })), []);
-  const reset = useCallback(() => { setState(initial); setChatMessages([]); setUndoStack([]); setRedoStack([]); setSubagentConfigs({}); setPendingQueue([]); }, []);
+  const reset = useCallback(() => {
+    setState(initial);
+    setChatMessages([]);
+    setUndoStack([]);
+    setRedoStack([]);
+    setSubagentConfigs({});
+    setPendingQueue([]);
+    trajectoryIdRef.current = _newTrajectoryId();
+    // A reset starts a brand-new chat — drop the live conversation id so
+    // the next auto-save creates a fresh Recents row (rather than
+    // overwriting the prior chat with an empty snapshot).
+    liveConversationIdRef.current = null;
+    setLiveConversationId(null);
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+  }, []);
 
-  const createShare = useCallback(async (): Promise<{ id: string; url: string } | null> => {
+  /** User clicked thumbs-up / thumbs-down (or added a comment) on an
+   *  assistant turn. Updates local state, then POSTs the FULL chat +
+   *  configs to /feedback/trajectory so the offline pipeline at
+   *  mas_refine/trajectories.{csv,db} has everything it needs.
+   *
+   *  Pass ``feedback: null`` to clear a previous rating (we still POST
+   *  so the persisted store reflects the withdrawal — easier to filter
+   *  in the future than re-deriving the latest state per turn). */
+  const setMessageFeedback = useCallback(async (
+    turnIndex: number,
+    feedback: "up" | "down" | null,
+    comment?: string,
+  ): Promise<{ ok: boolean; error?: string }> => {
     const cur = stateRef.current;
-    // Enterprise runs need extra payload so the read-only viewer can render
-    // the EnterprisePicker context (task title/prompt) and the 5th column
-    // (sandbox graph + diffs). Reasoning shares simply omit these fields.
+    const msgs = msgsRef.current;
+    if (turnIndex < 0 || turnIndex >= msgs.length) return { ok: false, error: "Invalid turn index" };
+    const target = msgs[turnIndex];
+    if (target.role !== "assistant") return { ok: false, error: "Not an assistant turn" };
+
+    // Optimistic local update so the thumb fills instantly.
+    setChatMessages(prev => prev.map((m, i) => i === turnIndex
+      ? { ...m, feedback, feedbackComment: feedback ? (comment ?? m.feedbackComment ?? "") : "" }
+      : m
+    ));
+
+    // Withdrawing a rating still persists (so the future pipeline can
+    // see the user changed their mind), but the rating is normalized
+    // to "down" with comment "[withdrawn]" — keeps the schema simple
+    // (rating is NOT NULL) without losing the signal. If we ever want
+    // to filter these out we just match comment === "[withdrawn]".
+    const persistRating: "up" | "down" = feedback ?? "down";
+    const persistComment = feedback ? (comment ?? "") : "[withdrawn]";
+    // Coarse turn-kind tag so the offline pipeline can filter plan
+    // ratings vs answer ratings without re-parsing conversation_history.
+    const turnKind: string =
+      target.plan ? "plan"
+      : target.isAnswer ? "answer"
+      : target.verifierRun ? "verifier"
+      : target.warning ? "warning"
+      : "other";
+    // ``answer`` column captures the meaningful artifact the user rated.
+    // For plan turns that's the planner XML (the chat content is just
+    // a one-liner like "Plan ready: 3 agents"). For everything else the
+    // chat content IS the rated artifact.
+    const persistAnswer: string = target.plan?.xml || target.content || "";
+
+    // Read the signed-in user (if any) at submit time so the
+    // annotation row in mas_refine/trajectories.{csv,db} carries
+    // ``user_sub`` for downstream JOINs. Guests submit with sub=null.
+    const authedUser = readStoredAuthUser();
+
+    try {
+      const res = await fetch("/feedback/trajectory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trajectory_id: trajectoryIdRef.current,
+          turn_index: turnIndex,
+          turn_kind: turnKind,
+          rating: persistRating,
+          comment: persistComment,
+          mode: cur.dataset || (cur.enterpriseTaskId ? "enterprise" : "custom"),
+          dom: cur.dom,
+          subagent_model: cur.subagentModel,
+          enterprise_task_id: cur.enterpriseTaskId,
+          enterprise_domain: cur.enterpriseTask?.domain,
+          problem: cur.problem,
+          answer: persistAnswer,
+          agent_count: cur.plan?.graph?.agents?.length ?? null,
+          verifier_total: target.verifierRun?.total ?? null,
+          verifier_passed: target.verifierRun?.passed ?? null,
+          user_sub: authedUser?.sub ?? null,
+          user_email: authedUser?.email ?? null,
+          user_name: authedUser?.name ?? null,
+          // FULL untruncated chat history — DO NOT shorten. Used for
+          // SFT/DPO datasets downstream.
+          conversation_history: msgs.map((m, i) => ({
+            index: i,
+            role: m.role,
+            content: m.content,
+            is_answer: !!m.isAnswer,
+            warning: m.warning,
+            plan: m.plan ?? null,
+            verifier_run: m.verifierRun ?? null,
+            feedback: i === turnIndex ? feedback : (m.feedback ?? null),
+            feedback_comment: i === turnIndex ? (feedback ? (comment ?? "") : "") : (m.feedbackComment ?? ""),
+          })),
+          configs: {
+            subagent_model: cur.subagentModel,
+            dom: cur.dom,
+            dataset: cur.dataset,
+            problem: cur.problem,
+            expected_answer: cur.expectedAnswer,
+            enterprise_task_id: cur.enterpriseTaskId,
+            enterprise_task: cur.enterpriseTask,
+            enabled_tools: cur.enabledTools,
+            stage: cur.stage,
+            subagent_configs: subagentConfigs,
+            custom_agents: customAgents,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => `HTTP ${res.status}`);
+        return { ok: false, error: detail || `HTTP ${res.status}` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  // We deliberately don't depend on chatMessages/state directly — the
+  // refs read fresh values on every call, which avoids stale-closure
+  // races during a rapid click sequence.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subagentConfigs, customAgents]);
+
+  /** Build the share payload from current state. Shared by the manual
+   *  share button (no id supplied; backend allocates) and the auto-save
+   *  loop (existing id supplied; backend upserts). Kept in one place so
+   *  enterprise/reasoning field handling stays consistent. */
+  const _buildShareSnapshot = useCallback((includeId: string | null): ShareSnapshot & { id?: string } => {
+    const cur = stateRef.current;
     const isEnterprise = !!cur.enterpriseTaskId;
-    const snapshot: ShareSnapshot = {
+    const authedUser = readStoredAuthUser();
+    const snap: ShareSnapshot & { id?: string } = {
       problem: cur.problem,
       dataset: cur.dataset,
       dom: cur.dom,
@@ -596,6 +830,7 @@ export function useOrchestration() {
       custom_agents: customAgents,
       subagent_configs: subagentConfigs,
       mode: isEnterprise ? "enterprise" : "reasoning",
+      user_sub: authedUser?.sub ?? null,
       ...(isEnterprise
         ? {
             enterprise_task_id: cur.enterpriseTaskId,
@@ -606,6 +841,19 @@ export function useOrchestration() {
           }
         : {}),
     };
+    if (includeId) snap.id = includeId;
+    return snap;
+  }, [customAgents, subagentConfigs]);
+
+  const createShare = useCallback(async (): Promise<{ id: string; url: string } | null> => {
+    const cur = stateRef.current;
+    // Reuse the live id so a manual "Share" click resolves to the same
+    // record we've been auto-saving to — the public link === the
+    // user's Recents row. If no auto-save has happened yet (e.g. guest
+    // session or instant manual share), let the backend allocate one
+    // and adopt it as the live id for any later auto-saves.
+    const reuseId = liveConversationIdRef.current;
+    const snapshot = _buildShareSnapshot(reuseId);
     try {
       const res = await fetch("/share", {
         method: "POST",
@@ -622,13 +870,93 @@ export function useOrchestration() {
       // a tunnel). Fall back to the current origin only if the backend didn't
       // provide one, so dev/local setups still work.
       const url = data.url || `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(data.id)}`;
+      // Adopt this id as the conversation's live id so subsequent
+      // auto-saves keep upserting to it rather than spawning a sibling.
+      if (liveConversationIdRef.current !== data.id) {
+        liveConversationIdRef.current = data.id;
+        setLiveConversationId(data.id);
+      }
+      setHistoryVersion(v => v + 1);
       track("share_created", { has_plan: !!cur.plan, has_answer: !!cur.finalAnswer, agent_count: cur.plan?.graph.agents.length ?? 0 });
       return { id: data.id, url };
     } catch (err) {
       setState(s => ({ ...s, error: String(err) }));
       return null;
     }
-  }, [customAgents, subagentConfigs]);
+  }, [_buildShareSnapshot]);
+
+  /** Silently upsert the current conversation to the user's history.
+   *  No UI surface — failures are swallowed (we never want a transient
+   *  /share hiccup to interrupt the user's chat). Returns the resolved
+   *  share id on success, or null on any skip/failure.
+   *
+   *  Gating rules:
+   *    • Guests (no user sub) — skip; history is per-user.
+   *    • Read-only "?share=" mode — skip; we're viewing, not authoring.
+   *    • Empty workspaces (no chat messages) — skip; nothing to save.
+   *    • An auto-save already in flight — skip; a fresh debounce tick
+   *      will fire after the current one resolves.
+   */
+  const _autoSaveConversation = useCallback(async (): Promise<string | null> => {
+    const cur = stateRef.current;
+    const authedUser = readStoredAuthUser();
+    if (!authedUser?.sub) return null;
+    if (msgsRef.current.length === 0) return null;
+    if (autoSavingRef.current) return null;
+    const reuseId = liveConversationIdRef.current;
+    const snapshot = _buildShareSnapshot(reuseId);
+    autoSavingRef.current = true;
+    try {
+      const res = await fetch("/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot),
+      });
+      if (!res.ok) return null;
+      const data: { id: string; created_at: number } = await res.json();
+      if (liveConversationIdRef.current !== data.id) {
+        liveConversationIdRef.current = data.id;
+        setLiveConversationId(data.id);
+      }
+      setHistoryVersion(v => v + 1);
+      return data.id;
+    } catch {
+      return null;
+    } finally {
+      autoSavingRef.current = false;
+    }
+    // ``cur`` is read for type-narrowing only; eslint isn't sure.
+    void cur;
+  }, [_buildShareSnapshot]);
+
+  // Schedule a debounced auto-save whenever any state that should be
+  // reflected in Recents changes. We coalesce bursts (e.g. streaming
+  // execution emits dozens of agentState updates per second) into a
+  // single POST 2s after the last change. The "?share=" read-only
+  // viewer and the empty workspace short-circuit inside the saver.
+  const autoSaveRef = useRef(_autoSaveConversation);
+  autoSaveRef.current = _autoSaveConversation;
+  useEffect(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      void autoSaveRef.current();
+    }, 2000);
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+    // We intentionally exclude state.agentStates from the deps — it
+    // changes far too often during streaming and the eventual ``stage``
+    // / ``finalAnswer`` transitions already trip a save at the natural
+    // boundaries (plan ready, run complete, refinement returned).
+  }, [chatMessages, state.plan, state.finalAnswer, state.stage, state.problem,
+      state.dataset, state.dom, state.subagentModel, state.enterpriseTaskId,
+      state.sandboxDiffs.length, customAgents, subagentConfigs]);
 
   const loadShare = useCallback(async (shareId: string): Promise<boolean> => {
     setState(s => ({ ...s, isLoading: true, error: null }));
@@ -718,6 +1046,36 @@ export function useOrchestration() {
     loadShareRef.current(sid);
   }, []);
 
+  /** Load a conversation from the user's history into the *editable*
+   *  workspace (NOT read-only "shared" mode). Used by the Recents
+   *  rail on the left sidebar. Clears the ?share= URL param so a
+   *  reload doesn't snap back to read-only.
+   *
+   *  Returns the same boolean as loadShare so the caller can show a
+   *  toast on failure. */
+  const openHistoryItem = useCallback(async (shareId: string): Promise<boolean> => {
+    setIsShared(false);
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("share")) {
+        params.delete("share");
+        const next = `${window.location.pathname}${params.toString() ? "?" + params.toString() : ""}${window.location.hash}`;
+        window.history.replaceState({}, "", next);
+      }
+    }
+    const ok = await loadShare(shareId);
+    if (ok) {
+      // Continuing this conversation should upsert back to the SAME
+      // share record (so refining a loaded chat doesn't spawn a sibling
+      // row in Recents). New trajectory id though — annotations on a
+      // continued chat belong to a new trajectory, conceptually.
+      liveConversationIdRef.current = shareId;
+      setLiveConversationId(shareId);
+      trajectoryIdRef.current = _newTrajectoryId();
+    }
+    return ok;
+  }, [loadShare]);
+
   const exitSharedMode = useCallback(() => {
     setIsShared(false);
     setState(initial);
@@ -727,6 +1085,10 @@ export function useOrchestration() {
     setSubagentConfigs({});
     setCustomAgents([]);
     setPendingQueue([]);
+    // Detach from the viewed share — exiting "shared" mode lands on a
+    // blank workspace, not a continued edit of someone else's share.
+    liveConversationIdRef.current = null;
+    setLiveConversationId(null);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
       url.searchParams.delete("share");
@@ -734,5 +1096,5 @@ export function useOrchestration() {
     }
   }, []);
 
-  return { ...state, customAgents, subagentConfigs, chatMessages, undoStack, redoStack, pendingQueue, isShared, generatePlan, generateEnterprisePlan, previewEnterpriseTask, clearSandboxPreview, runVerifier, executePlan, cancelExecution, refinePlan, cancelRefine, queueRefine, editQueued, removeQueued, undoPlan, redoPlan, switchToPlan, designAgent, removeCustomAgent, updateCustomAgent, updateSubagentConfig, setSubagentModel, goToStage, reset, createShare, loadShare, exitSharedMode };
+  return { ...state, customAgents, subagentConfigs, chatMessages, undoStack, redoStack, pendingQueue, isShared, liveConversationId, historyVersion, generatePlan, generateEnterprisePlan, previewEnterpriseTask, previewEnterpriseDomain, clearSandboxPreview, runVerifier, executePlan, cancelExecution, refinePlan, cancelRefine, queueRefine, editQueued, removeQueued, undoPlan, redoPlan, switchToPlan, designAgent, removeCustomAgent, updateCustomAgent, updateSubagentConfig, setSubagentModel, goToStage, reset, createShare, loadShare, openHistoryItem, exitSharedMode, setMessageFeedback };
 }

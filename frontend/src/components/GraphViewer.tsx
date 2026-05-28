@@ -19,6 +19,7 @@ const COLORS: Record<AgentType, string> = {
   DebateAgent: "#f59e0b",
   ReflexionAgent: "#10b981",
   WebSearchAgent: "#ef4444",
+  ExtractAgent: "#14b8a6",
   CustomAgent: "#ec4899",
   MCPAgent: "#0ea5e9",
   EnterpriseExecutorAgent: "#6366f1",

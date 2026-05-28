@@ -15,7 +15,10 @@ export default defineConfig({
       '/health': 'http://localhost:8005',
       '/dataset': 'http://localhost:8005',
       '/share': 'http://localhost:8005',
+      '/feedback': 'http://localhost:8005',
       '/enterprise': 'http://localhost:8005',
+      '/auth': 'http://localhost:8005',
+      '/users': 'http://localhost:8005',
     }
   }
 })

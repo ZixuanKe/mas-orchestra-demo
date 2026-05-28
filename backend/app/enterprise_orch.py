@@ -53,7 +53,7 @@ from .enterprise.tool_catalog import (
 )
 from .executor import _is_reasoning_model, _supports_temperature, get_client
 from .metaagent import get_vllm_client
-from .models import Agent, AgentType, DomLevel, Graph
+from .models import Agent, AgentType, DomLevel, Graph, FILE_TOOL_AGENT_TYPES, FILE_TOOL_NAMES
 from .parser import parse, topo_sort
 
 logger = logging.getLogger(__name__)
@@ -88,19 +88,44 @@ def _chat_kwargs(model: str, max_out: int = 1024) -> dict:
 
 # ───────────────────────────────────────────────────────────── planner
 
-_PLANNER_SYSTEM_BASE = """You are MAS-Orchestra's enterprise planner.
-
-Given an enterprise task (a user instruction plus a system policy) and a
-curated catalog of MCP tools the agent is allowed to use, you must design a
-DAG of MCPAgent nodes that, executed in order, satisfies the task.
-
+_PLANNER_VOCAB_CORE = """\
 Vocabulary
 - An MCPAgent is itself an LLM that wields exactly one MCP tool. Its job at
   execution time is to read the upstream context and decide whether/how to
   call its one tool with appropriate arguments.
 - An EnterpriseExecutorAgent has no tool — it synthesizes a final natural-
   language reply from upstream MCPAgent outputs.
+"""
 
+# Only injected when the caller (CLI) sets file_tools_enabled=True. The
+# webapp leaves the flag off so the planner never proposes file-tool
+# agents the browser has no way to execute.
+_PLANNER_VOCAB_FILE_TOOLS = """\
+- Optional FILE-TOOL agents are available when the task involves reading or
+  modifying files on the user's local machine. They execute on the user's
+  CLI (not on the server), so use them only when the user explicitly asks
+  for file work. The four types are:
+    * ReadFileAgent       — reads a text file (args: path, optional offset/limit)
+    * WriteFileAgent      — writes/creates a file (args: path, content)
+    * PatchAgent          — find-and-replace inside a file (args: path,
+                            old_string, new_string, optional replace_all)
+    * SearchFilesAgent    — content/file search (args: pattern, target='content'
+                            or 'files', optional path, file_glob, limit)
+  File-tool agents must include a ``<tool_args>{json}</tool_args>`` block with
+  the literal arguments to pass to the tool. They are NOT MCPAgents — do not
+  emit ``<tool_name>`` for them. String values inside tool_args may reference
+  upstream outputs via ${node_id} the same way <agent_input> does.
+"""
+
+_PLANNER_HEADER = """You are MAS-Orchestra's enterprise planner.
+
+Given an enterprise task (a user instruction plus a system policy) and a
+curated catalog of MCP tools the agent is allowed to use, you must design a
+DAG of MCPAgent nodes that, executed in order, satisfies the task.
+
+"""
+
+_PLANNER_BODY = """\
 Output rules
 - Each MCPAgent wraps EXACTLY ONE tool. Reuse the same tool across nodes
   only when the task requires multiple distinct invocations.
@@ -144,6 +169,23 @@ Constraints
 - No cycles. Edges must match dependencies.
 """
 
+# Only injected when file_tools_enabled=True. Appended after the body so
+# the planner has just seen the canonical MCPAgent example before the
+# file-tool example, but before _DOM_GUIDANCE bounds the agent count.
+_PLANNER_FILE_TOOL_EXAMPLE = """\
+
+Example file-tool node (only emit one when the user explicitly mentions a file):
+
+  <agent>
+    <agent_id>read_readme</agent_id>
+    <agent_type>ReadFileAgent</agent_type>
+    <tool_args>{"path": "README.md", "limit": 200}</tool_args>
+    <agent_description>Read the README so the next agent can summarize it.</agent_description>
+    <agent_input>Read README.md for the user.</agent_input>
+    <depends_on></depends_on>
+  </agent>
+"""
+
 # Per-DoM planning style guidance, appended to the base system prompt.
 _DOM_GUIDANCE: dict[DomLevel, str] = {
     DomLevel.LOW: (
@@ -171,8 +213,22 @@ _DOM_GUIDANCE: dict[DomLevel, str] = {
 }
 
 
-def planner_system_prompt(dom: DomLevel) -> str:
-    return _PLANNER_SYSTEM_BASE + _DOM_GUIDANCE.get(dom, _DOM_GUIDANCE[DomLevel.HIGH])
+def planner_system_prompt(dom: DomLevel, file_tools_enabled: bool = False) -> str:
+    parts = [_PLANNER_HEADER, _PLANNER_VOCAB_CORE]
+    if file_tools_enabled:
+        parts.append(_PLANNER_VOCAB_FILE_TOOLS)
+    parts.append("\n" + _PLANNER_BODY)
+    if file_tools_enabled:
+        parts.append(_PLANNER_FILE_TOOL_EXAMPLE)
+    parts.append(_DOM_GUIDANCE.get(dom, _DOM_GUIDANCE[DomLevel.HIGH]))
+    return "".join(parts)
+
+
+# Back-compat alias for any external import. Defaults to the no-file-tools
+# variant — same behaviour as before file tools were introduced.
+_PLANNER_SYSTEM_BASE = (
+    _PLANNER_HEADER + _PLANNER_VOCAB_CORE + "\n" + _PLANNER_BODY
+)
 
 
 def _build_planner_user(task: EnterpriseTask, tools: list[dict[str, Any]]) -> str:
@@ -323,6 +379,7 @@ async def plan_enterprise(
     enabled_tools: list[str],
     planner_model: str = "gpt-5.4-mini",
     dom: DomLevel = DomLevel.HIGH,
+    file_tools_enabled: bool = False,
 ) -> tuple[str, Graph, str | None]:
     """Return ``(xml, parsed_graph, warning_or_none)``.
 
@@ -348,7 +405,7 @@ async def plan_enterprise(
     if enabled_tools:
         wanted = set(enabled_tools)
         catalog = [t for t in catalog if t["name"] in wanted]
-    system_msg = planner_system_prompt(dom)
+    system_msg = planner_system_prompt(dom, file_tools_enabled=file_tools_enabled)
     user_msg = _build_planner_user(task, catalog)
 
     backend = _ENTERPRISE_PLANNER_BACKEND
@@ -529,6 +586,7 @@ async def refine_enterprise_plan(
     enabled_tools: list[str],
     refine_model: str = "gpt-5.1",
     dom: DomLevel = DomLevel.HIGH,
+    file_tools_enabled: bool = False,
 ) -> str:
     """Conversational refinement of an existing enterprise plan.
 
@@ -554,9 +612,11 @@ async def refine_enterprise_plan(
 
     dom_guidance = _DOM_GUIDANCE.get(dom, _DOM_GUIDANCE[DomLevel.HIGH])
 
+    file_tools_block = _PLANNER_VOCAB_FILE_TOOLS if file_tools_enabled else ""
     system = (
         _ENTERPRISE_REFINE_SYSTEM
         + dom_guidance
+        + file_tools_block
         + f"\n\n## Gym policy (informs the planner; the per-agent executor also honors it)\n{task.system_prompt}"
         + f"\n\n## Original user task\n{task.user_prompt}"
         + f"\n\n## Current plan (XML)\n{current_xml}"
@@ -603,12 +663,54 @@ _OP_NOOP = "noop"       # agent declined to call its tool
 _OP_ERROR = "error"     # tool / LLM error; nothing applied
 
 
+# Heuristic patterns we match against MCP tool outputs to detect failures
+# that the gym reports as plain text (isError=false) rather than via the
+# MCP error envelope. Without this, a "Calendar with id 'primary' does not
+# exist" response would be tagged READ — silencing the AppView ribbon and
+# letting the executor LLM claim success on top of a failure.
+_TEXT_ERROR_PATTERNS = re.compile(
+    r"""(
+        \b(does\s+not\s+exist
+          | not\s+found
+          | no\s+such
+          | unable\s+to
+          | failed\s+to
+          | cannot\s+(?:find|locate|create|update|delete)
+          | invalid\s+(?:id|argument|parameter|input|request)
+          | permission\s+denied
+          | unauthorized
+          | forbidden
+          | conflict
+          | already\s+exists
+          | bad\s+request
+          )\b
+        | ^error[:\s]
+        | ^"?error"?\s*[:=]
+        | \"error\"\s*:
+        | \"isError\"\s*:\s*true
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _looks_like_tool_error(output: str) -> bool:
+    """True if a non-bracketed MCP text payload looks like an error.
+    Probes the first ~300 chars only (errors are usually announced
+    up-front) to keep this cheap even for long success payloads."""
+    head = output[:300].lstrip()
+    if not head:
+        return False
+    return bool(_TEXT_ERROR_PATTERNS.search(head))
+
+
 def _classify_step(diff_events: list[dict], output: str | None) -> str:
     """Decide which of the four step kinds this MCPAgent invocation was.
 
     Order matters: a non-empty diff always wins (a tool can both write and
     print an error sentinel), then we look at the output for our own error
-    / no-op sentinels emitted by ``_run_mcp_agent``.
+    / no-op sentinels emitted by ``_run_mcp_agent``, and finally we
+    pattern-match against common natural-language failure phrases that
+    some gyms emit as plain text (isError=false).
     """
     if diff_events:
         return _OP_WRITE
@@ -619,7 +721,7 @@ def _classify_step(diff_events: list[dict], output: str | None) -> str:
     # explicitly refused to call the tool. Treat that as a no-op.
     if text.startswith("[no tool call made]"):
         return _OP_NOOP
-    # Any of our other bracketed sentinels mean we hit an error path before
+    # Any of our own bracketed sentinels mean we hit an error path before
     # the tool actually wrote anything to the gym.
     if text.startswith("[") and any(
         text.startswith(p) for p in (
@@ -627,6 +729,9 @@ def _classify_step(diff_events: list[dict], output: str | None) -> str:
             "[bad JSON", "[MCPAgent ", "[ERROR",
         )
     ):
+        return _OP_ERROR
+    # Plain-text errors that the gym slipped through with isError=false.
+    if _looks_like_tool_error(text):
         return _OP_ERROR
     return _OP_READ
 
@@ -766,9 +871,26 @@ _EXECUTOR_SYSTEM = (
     "You are the final EnterpriseExecutorAgent in MAS-Orchestra. You did not "
     "call any tools yourself. Read the user's original task and the outputs "
     "of the upstream MCPAgent calls, then write the final answer for the "
-    "user. Be concise: confirm what was done, mention key created/updated "
-    "IDs, and flag anything that failed. No XML, no markdown headers, just "
-    "the answer."
+    "user.\n\n"
+    "STRICT RULES — never violate these:\n"
+    "- Treat any upstream output that starts with `[FAILED ...]`, `[ERROR ...]`, "
+    "`[tool ... failed]`, `[LLM error ...]`, `[Unknown tool ...]`, `[bad JSON ...]` "
+    "or that contains phrases like 'does not exist', 'not found', 'permission "
+    "denied', 'invalid', 'failed to', 'unable to' as a HARD FAILURE.\n"
+    "- If ANY mutation step failed (e.g. create/update/delete/patch), the task "
+    "is NOT complete. Do NOT say it was 'scheduled', 'created', 'updated' or "
+    "similar — instead state plainly what failed and why, citing the failing "
+    "tool name and the error text verbatim in one short sentence.\n"
+    "- Only claim success for actions whose upstream output is a normal "
+    "non-error payload (an ID, a JSON object, a list, a confirmation, etc).\n"
+    "- If a tool call says e.g. \"Calendar with id 'primary' does not exist\", "
+    "the correct summary is something like: \"Could not schedule the meeting: "
+    "the create_event tool reported that calendar 'primary' does not exist. "
+    "Please retry with a valid calendar ID.\" — never \"The meeting was "
+    "scheduled. Note that the calendar does not exist.\"\n\n"
+    "Be concise: confirm what was actually done (created/updated IDs from "
+    "successful steps), and clearly flag what failed. No XML, no markdown "
+    "headers, just the answer."
 )
 
 
@@ -805,6 +927,7 @@ async def run_enterprise(
     task: EnterpriseTask,
     graph_dict: dict,
     subagent_model: str = "gpt-5.4-mini",
+    session_id: str | None = None,
 ) -> AsyncIterator[dict]:
     """SSE generator: yields graph → sandbox_snapshot → per-agent events →
     sandbox_diff after each tool → final_answer → done."""
@@ -852,7 +975,6 @@ async def run_enterprise(
                 output, args = await _run_mcp_agent(
                     agent, task, ctx, mcp, subagent_model, catalog,
                 )
-                ctx[aid] = output
 
                 # Snapshot AFTER the tool call and emit the diff.
                 try:
@@ -863,15 +985,26 @@ async def run_enterprise(
                     diffs = []
                     logger.warning(f"snapshot/diff failed after {aid}: {e}")
 
-                yield _sse("agent_complete", {
-                    "agentId": aid, "output": output,
-                    "tool_name": agent.tool_name,
-                    "tool_args": args,
-                })
                 # Classify the step kind so the frontend can render an
                 # activity ribbon for read / noop / error steps (which
                 # otherwise leave the panel silent and confuse the user).
                 op_kind = _classify_step(diffs, output)
+                # If the tool reported a natural-language failure that we
+                # detected post-hoc, prepend a [FAILED] banner so the
+                # executor LLM downstream cannot claim success on top of
+                # it. Bracketed sentinels emitted by ``_run_mcp_agent``
+                # are already self-flagged.
+                ctx_output = output
+                if op_kind == _OP_ERROR and not output.lstrip().startswith("["):
+                    ctx_output = f"[FAILED tool {agent.tool_name}] {output}"
+                ctx[aid] = ctx_output
+
+                yield _sse("agent_complete", {
+                    "agentId": aid, "output": output,
+                    "tool_name": agent.tool_name,
+                    "tool_args": args,
+                    "op_kind": op_kind,
+                })
                 if op_kind == _OP_WRITE:
                     affected = sorted({ev["table"] for ev in diffs if ev.get("table")})
                 else:
@@ -897,6 +1030,33 @@ async def run_enterprise(
                 output = await _run_executor_agent(agent, task, ctx, subagent_model)
                 ctx[aid] = output
                 yield _sse("agent_complete", {"agentId": aid, "output": output})
+            elif agent.type in FILE_TOOL_AGENT_TYPES:
+                # File-tool agents — emit ``tool_request`` first, then
+                # await the CLI POST so the event actually leaves the
+                # server. See ``_prepare_file_tool_request`` docstring
+                # for why this two-phase split exists.
+                from .main import _prepare_file_tool_request, _await_file_tool_result
+
+                payload, fut, err = _prepare_file_tool_request(agent, ctx, session_id)
+                if err is not None or payload is None or fut is None:
+                    ctx[aid] = f"[Agent {aid} failed: {err}]"
+                    yield _sse("agent_error", {"agentId": aid, "error": err or "invalid file-tool agent"})
+                else:
+                    yield _sse("tool_request", payload)
+                    output, err = await _await_file_tool_result(
+                        session_id, aid, fut, payload["toolName"],
+                    )
+                    if err is not None:
+                        ctx[aid] = f"[Agent {aid} failed: {err}]"
+                        yield _sse("agent_error", {"agentId": aid, "error": err})
+                    else:
+                        ctx[aid] = output or ""
+                        yield _sse("agent_complete", {
+                            "agentId": aid, "output": ctx[aid],
+                            "tool_name": FILE_TOOL_NAMES.get(agent.type),
+                            "tool_args": agent.tool_args or {},
+                            "op_kind": _OP_WRITE if agent.type in {AgentType.WRITE_FILE, AgentType.PATCH} else _OP_READ,
+                        })
             else:
                 # Fallback: treat unknown enterprise nodes as a plain LLM call.
                 output = await _run_executor_agent(agent, task, ctx, subagent_model)

@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DomLevel, EnterpriseDomain, EnterpriseTask, ToolSummary } from "../types";
 import { DOM_OPTIONS } from "../types";
 
-// With 7 domains × ~80 tasks each, rendering the full list is wasteful and
-// makes the page feel cluttered. Cap the on-screen task count and let the
-// search box reveal the rest.
-const VISIBLE_TASK_CAP = 30;
+// Show this many curated task chips by default under the hero. "Show all"
+// reveals the full catalog (which can be 80+ tasks per domain).
+const VISIBLE_CHIP_CAP = 6;
 
 /** True if an error came from an aborted fetch — either an explicit
  *  ``AbortError`` (DOMException) or the browser's generic "Failed to fetch"
@@ -25,8 +24,12 @@ interface Props {
   // tweak it right next to the prompt without scrolling away.
   dom: DomLevel;
   onDomChange: (d: DomLevel) => void;
-  // Fired the moment the user picks a task card. Used to preview the
-  // sandbox in the 5th column before they design a plan.
+  // Fired the moment the user picks a domain. Used to load a generic
+  // sandbox preview into the 5th column so the user can see the
+  // environment before writing a query or picking a task.
+  onDomainPreview?: (domain: string) => void;
+  // Fired the moment the user picks a curated task. Loads a
+  // task-specific snapshot (richer than the domain preview).
   onPreview?: (task: EnterpriseTask) => void;
   onSubmit: (task: EnterpriseTask, enabledTools: string[], dom: DomLevel) => void;
   isLoading: boolean;
@@ -38,15 +41,28 @@ const DOM_HINTS: Record<DomLevel, string> = {
   high_extensive: "Extensive → bracket every mutation with reads (5–10 MCPAgents).",
 };
 
-/** EnterprisePicker — domain selector → curated task list → tool checkboxes.
+/** EnterprisePicker — domain tabs → hero query box → "or try" curated
+ *  task chips.
  *
- * On the first render it fetches the available domains, then the tasks for
- * the first domain, then the full tool catalog. The user can:
- *   1. Pick a task. The task's oracle `default_tools` become pre-selected.
- *   2. Tick/untick additional tools from the full catalog before running.
- *   3. Hit "Design plan" to send `{task_id, enabled_tools}` to the planner.
+ *  Mirrors the look-and-feel of the reasoning-mode EmptyState: the
+ *  primary action is the free-form textarea + DoM + Design plan button,
+ *  with curated tasks demoted to one-click examples below.
+ *
+ *  Selecting a curated chip pre-fills the textarea AND remembers the
+ *  oracle task id (so verifiers stay available). Editing the textarea
+ *  clears the oracle link and the request becomes a custom query.
+ *
+ *  Submission paths:
+ *    - oracle task selected + prompt unchanged → POST /plan with
+ *      ``enterprise_task_id`` so verifier_count survives.
+ *    - otherwise → POST /enterprise/custom-task first to register an
+ *      ephemeral task with ALL tools enabled, then proceed as above.
  */
-export function EnterprisePicker({ dom, onDomChange, onPreview, onSubmit, isLoading }: Props) {
+export function EnterprisePicker({
+  dom, onDomChange,
+  onDomainPreview, onPreview,
+  onSubmit, isLoading,
+}: Props) {
   const [domains, setDomains] = useState<EnterpriseDomain[]>([]);
   const [domain, setDomain] = useState<string | null>(null);
   const [tasks, setTasks] = useState<EnterpriseTask[]>([]);
@@ -54,25 +70,22 @@ export function EnterprisePicker({ dom, onDomChange, onPreview, onSubmit, isLoad
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [enabledTools, setEnabledTools] = useState<Set<string>>(new Set());
   const [toolFilter, setToolFilter] = useState("");
-  const [toolsCollapsed, setToolsCollapsed] = useState(true);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Per-domain task counts shown in the domain selector badges. Loaded
   // alongside the domain list via /enterprise/task-counts.
   const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
   const [taskFilter, setTaskFilter] = useState("");
-  // "Show all" expands the per-domain list past VISIBLE_TASK_CAP. Reset
-  // whenever the domain or filter changes so the user doesn't end up
-  // scrolling through hundreds of cards by accident.
   const [showAllTasks, setShowAllTasks] = useState(false);
+  // Free-form query (also pre-filled by clicking a curated chip).
+  const [prompt, setPrompt] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  // Bumped each time the user types in the prompt textarea; used to
+  // detect "the prompt no longer matches the curated task" and demote
+  // the request to a custom query on submit.
+  const promptDirty = useRef(false);
 
   // 1. Load the domain catalog + per-domain task counts once.
-  //
-  // React StrictMode (dev) runs effects twice and the user can re-mount this
-  // panel by toggling modes — each remount fires a fresh round of fetches,
-  // and the previous round's in-flight requests are aborted by the browser.
-  // Browsers report aborted fetches as ``TypeError: Failed to fetch``; we
-  // swallow those (and AbortError) since they're benign by the time we hit
-  // ``.catch``. Real connectivity failures will still re-fire on remount.
   useEffect(() => {
     const ctrl = new AbortController();
     Promise.all([
@@ -93,11 +106,9 @@ export function EnterprisePicker({ dom, onDomChange, onPreview, onSubmit, isLoad
     return () => ctrl.abort();
   }, []);
 
-  // 2. Load tasks + tools whenever the chosen domain changes.
-  //
-  // The cleanup aborts the previous domain's in-flight fetches so a rapid
-  // click sequence (calendar → email → hr) doesn't leave dangling promises
-  // that overwrite the user's current selection with stale data.
+  // 2. Load tasks + tools whenever the chosen domain changes, AND fire
+  //    the domain-preview callback so the 5th column shows the
+  //    environment immediately (without waiting for a task pick).
   useEffect(() => {
     if (!domain) return;
     const ctrl = new AbortController();
@@ -105,7 +116,10 @@ export function EnterprisePicker({ dom, onDomChange, onPreview, onSubmit, isLoad
     setEnabledTools(new Set());
     setTaskFilter("");
     setShowAllTasks(false);
+    setPrompt("");
+    promptDirty.current = false;
     setError(null);
+    onDomainPreview?.(domain);
     Promise.all([
       fetch(`/enterprise/tasks?domain=${domain}`, { signal: ctrl.signal }).then(r => r.json()),
       fetch(`/enterprise/tools?domain=${domain}`, { signal: ctrl.signal }).then(r => r.json()),
@@ -119,14 +133,24 @@ export function EnterprisePicker({ dom, onDomChange, onPreview, onSubmit, isLoad
         if (!isAbortError(e)) setError(`Failed to load tasks for ${domain}: ${e}`);
       });
     return () => ctrl.abort();
+  // We intentionally don't include `onDomainPreview` to avoid re-firing
+  // the preview every time App.tsx re-renders with a new callback ref.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [domain]);
 
-  // 3. When a task is selected, seed enabled tools from its oracle list.
-  const selectedTask = tasks.find(t => t.id === selectedTaskId) || null;
-  useEffect(() => {
-    if (!selectedTask) return;
-    setEnabledTools(new Set(selectedTask.default_tools));
-  }, [selectedTask?.id]);
+  const selectedTask = useMemo(
+    () => tasks.find(t => t.id === selectedTaskId) || null,
+    [tasks, selectedTaskId]
+  );
+
+  /** Click a curated chip → pre-fill prompt + remember oracle id. */
+  const pickCuratedTask = (t: EnterpriseTask) => {
+    setSelectedTaskId(t.id);
+    setPrompt(t.user_prompt);
+    promptDirty.current = false;
+    setEnabledTools(new Set(t.default_tools));
+    onPreview?.(t);
+  };
 
   const toggleTool = (name: string) => {
     setEnabledTools(prev => {
@@ -137,13 +161,52 @@ export function EnterprisePicker({ dom, onDomChange, onPreview, onSubmit, isLoad
     });
   };
 
-  const filteredTools = toolFilter.trim()
-    ? tools.filter(t => t.name.toLowerCase().includes(toolFilter.toLowerCase())
-        || (t.description || "").toLowerCase().includes(toolFilter.toLowerCase()))
-    : tools;
+  /** Treat the request as "linked to the selected curated task" only
+   *  while the user hasn't edited the prompt. Editing demotes it to a
+   *  custom query so the planner gets the user's actual text. */
+  const linkedToOracle = selectedTask
+    && !promptDirty.current
+    && prompt.trim() === selectedTask.user_prompt.trim();
 
-  // Tasks filtered by the search box (title + summary + id substring match)
-  // — keeps featured-first ordering from the backend.
+  /** Submit either an oracle task or a freshly-registered custom task. */
+  const handleSubmit = async () => {
+    const text = prompt.trim();
+    if (!text || !domain) return;
+    setError(null);
+    // Path 1 — oracle task with intact prompt: send the original
+    // EnterpriseTask so verifier_count survives end-to-end.
+    if (linkedToOracle && selectedTask) {
+      const enabled = enabledTools.size ? [...enabledTools] : [...selectedTask.default_tools];
+      onSubmit(selectedTask, enabled, dom);
+      return;
+    }
+    // Path 2 — custom query: POST /enterprise/custom-task to register
+    // an ephemeral task with the full tool catalog enabled, then submit.
+    setSubmitting(true);
+    try {
+      const res = await fetch("/enterprise/custom-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain, user_prompt: text }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const task: EnterpriseTask = await res.json();
+      setTasks(prev => [task, ...prev.filter(t => t.id !== task.id)]);
+      setSelectedTaskId(task.id);
+      const allTools = new Set<string>(tools.map(t => t.name));
+      // If the user manually adjusted tools we keep their selection;
+      // otherwise default to ALL tools for a free-form query.
+      const enabled = enabledTools.size > 0 && !linkedToOracle ? [...enabledTools] : [...allTools];
+      setEnabledTools(new Set(enabled));
+      onSubmit(task, enabled, dom);
+    } catch (e) {
+      setError(`Failed to register custom query: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ───────────────────────────────────────────────────────── derived
   const filteredTasks = useMemo(() => {
     const q = taskFilter.trim().toLowerCase();
     if (!q) return tasks;
@@ -154,233 +217,226 @@ export function EnterprisePicker({ dom, onDomChange, onPreview, onSubmit, isLoad
     );
   }, [tasks, taskFilter]);
 
-  // Capped slice the picker actually renders. If the user is searching we
-  // show everything (search itself is the filter); otherwise we cap unless
-  // they explicitly clicked "Show all".
-  const visibleTasks = (taskFilter.trim() || showAllTasks)
+  const visibleChips = showAllTasks || taskFilter.trim()
     ? filteredTasks
-    : filteredTasks.slice(0, VISIBLE_TASK_CAP);
-  const hiddenCount = filteredTasks.length - visibleTasks.length;
+    : filteredTasks.slice(0, VISIBLE_CHIP_CAP);
+  const hiddenChipCount = filteredTasks.length - visibleChips.length;
 
-  const canSubmit = !!selectedTask && enabledTools.size > 0 && !isLoading;
+  const filteredTools = toolFilter.trim()
+    ? tools.filter(t => t.name.toLowerCase().includes(toolFilter.toLowerCase())
+        || (t.description || "").toLowerCase().includes(toolFilter.toLowerCase()))
+    : tools;
+
+  const currentDomain = domains.find(d => d.name === domain);
+  const canSubmit = prompt.trim().length > 0 && !isLoading && !submitting && !!domain;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
 
-      {/* Domain selector */}
-      <div>
-        <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Enterprise domain</div>
-        <div className="flex flex-wrap gap-2">
+      {/* ── Domain selector (mandatory — environment changes per domain) */}
+      <div className="text-center">
+        <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">
+          Pick an enterprise environment
+        </div>
+        <div className="flex flex-wrap gap-1.5 justify-center">
           {domains.map(d => {
             const n = taskCounts[d.name];
+            const active = domain === d.name;
             return (
               <button
                 key={d.name}
                 onClick={() => setDomain(d.name)}
                 disabled={isLoading}
-                className={`px-3 py-2 text-sm rounded-lg border transition flex items-center gap-2
-                  ${domain === d.name
+                className={`px-2.5 py-1.5 text-xs rounded-lg border transition flex items-center gap-1.5
+                  ${active
                     ? "border-blue-500 bg-blue-50 text-blue-800 shadow-sm"
                     : "border-gray-200 bg-white hover:bg-gray-50 text-gray-700"}`}
+                title={d.summary || undefined}
               >
-                <span className="text-base leading-none">{d.icon}</span>
+                <span className="text-sm leading-none">{d.icon}</span>
                 <span className="font-medium">{d.label}</span>
                 {typeof n === "number" && (
-                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full
-                    ${domain === d.name ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"}`}>
+                  <span className={`text-[10px] font-mono px-1 py-0 rounded-full
+                    ${active ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-500"}`}>
                     {n}
                   </span>
                 )}
               </button>
             );
           })}
-          {domains.length === 0 && <div className="text-xs text-gray-400">Loading domains…</div>}
+          {domains.length === 0 && <div className="text-xs text-gray-400 py-2">Loading domains…</div>}
         </div>
-        {domains.find(d => d.name === domain)?.summary && (
-          <div className="mt-1.5 text-xs text-gray-500">{domains.find(d => d.name === domain)!.summary}</div>
-        )}
       </div>
 
-      {/* Task list */}
-      <div>
-        <div className="flex items-center justify-between mb-2 gap-2">
-          <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">
-            Pick a task
-            <span className="ml-1 text-gray-400 normal-case">
-              ({filteredTasks.length}{filteredTasks.length !== tasks.length ? ` of ${tasks.length}` : ""})
-            </span>
-          </div>
-          <input
-            value={taskFilter}
-            onChange={e => setTaskFilter(e.target.value)}
-            placeholder="Filter tasks…"
-            disabled={isLoading || tasks.length === 0}
-            className="flex-1 max-w-[16rem] text-xs px-2 py-1 border rounded bg-white"
+      {/* ── Hero composer (reasoning-mode style) */}
+      {domain && (
+        <div className="rounded-2xl border border-gray-300 bg-white shadow-sm focus-within:border-gray-400 transition-colors relative">
+          <textarea
+            rows={3}
+            value={prompt}
+            onChange={e => { setPrompt(e.target.value); promptDirty.current = true; }}
+            onKeyDown={e => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSubmit) {
+                e.preventDefault();
+                handleSubmit();
+              }
+            }}
+            placeholder={`What should Orchestra do in the ${currentDomain?.label || domain} sandbox?`}
+            disabled={isLoading || submitting}
+            className="w-full resize-none outline-none text-sm leading-relaxed p-4 placeholder:text-gray-400 rounded-t-2xl bg-transparent"
           />
-        </div>
-        <ul className="grid grid-cols-1 gap-2 max-h-[28rem] overflow-y-auto pr-1">
-          {visibleTasks.map(t => (
-            <li key={t.id}>
-              <button
-                onClick={() => {
-                  setSelectedTaskId(t.id);
-                  onPreview?.(t);
-                }}
-                disabled={isLoading}
-                className={`w-full text-left rounded-lg border p-3 transition
-                  ${selectedTaskId === t.id
-                    ? "border-blue-500 ring-1 ring-blue-200 bg-blue-50/40"
-                    : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"}`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      {t.featured && (
-                        <span className="text-amber-500 text-xs" title="Featured task">★</span>
-                      )}
-                      <div className="text-sm font-semibold text-gray-800 truncate">{t.title}</div>
-                      {typeof t.verifier_count === "number" && t.verifier_count > 0 && (
-                        <span className="ml-auto text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-                          ✓{t.verifier_count}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{t.summary}</div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {t.default_tools.slice(0, 6).map(tool => (
-                        <span key={tool} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">{tool}</span>
-                      ))}
-                      {t.default_tools.length > 6 && (
-                        <span className="text-[10px] text-gray-400">+{t.default_tools.length - 6}</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </li>
-          ))}
-          {visibleTasks.length === 0 && (
-            <li className="text-xs text-gray-400 py-4 text-center">
-              {tasks.length === 0 ? "No tasks for this domain." : "No tasks match your filter."}
-            </li>
-          )}
-        </ul>
-        {hiddenCount > 0 && (
-          <button
-            onClick={() => setShowAllTasks(true)}
-            className="mt-2 w-full text-[11px] text-blue-600 hover:underline"
-          >
-            Show {hiddenCount} more task{hiddenCount === 1 ? "" : "s"}…
-          </button>
-        )}
-      </div>
-
-      {/* Task prompt preview + tool catalog */}
-      {selectedTask && (
-        <>
-          <div className="border rounded-lg p-3 bg-gray-50">
-            <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-1">User instruction</div>
-            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto">
-              {selectedTask.user_prompt}
-            </p>
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-t bg-gray-50/50 rounded-b-2xl">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <div className="inline-flex gap-0.5 p-0.5 rounded-md border bg-white flex-none">
+                {DOM_OPTIONS.map(d => (
+                  <button
+                    key={d.value}
+                    onClick={() => !isLoading && onDomChange(d.value)}
+                    disabled={isLoading}
+                    className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+                      dom === d.value ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"
+                    }`}
+                    title={d.hint || undefined}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] text-gray-500 truncate" title={DOM_HINTS[dom]}>
+                {linkedToOracle && selectedTask
+                  ? <><span className="text-emerald-700">★ {selectedTask.title}</span> · ✓{selectedTask.verifier_count ?? 0} verifier{(selectedTask.verifier_count ?? 0) === 1 ? "" : "s"}</>
+                  : prompt.trim()
+                    ? <>Custom query · all tools enabled by default</>
+                    : DOM_HINTS[dom]}
+              </span>
+            </div>
+            <button
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:bg-gray-300 flex items-center gap-1 flex-none"
+            >
+              {submitting ? "Preparing…" : isLoading ? "Designing…" : "Design plan"}
+              <span aria-hidden>→</span>
+            </button>
           </div>
+        </div>
+      )}
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">
-                Enabled tools ({enabledTools.size}/{tools.length})
-              </div>
-              <button
-                onClick={() => setToolsCollapsed(c => !c)}
-                className="text-[11px] text-blue-600 hover:underline"
-              >
-                {toolsCollapsed ? "Edit all tools" : "Hide all tools"}
-              </button>
-            </div>
-
-            {/* Always show the selected/oracle tools as compact chips */}
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {[...enabledTools].sort().map(name => (
+      {/* ── OR TRY curated chips */}
+      {domain && filteredTasks.length > 0 && (
+        <div className="text-center">
+          <div className="text-[11px] text-gray-400 uppercase tracking-wide mb-2">or try</div>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {visibleChips.map(t => {
+              const active = selectedTaskId === t.id;
+              return (
                 <button
-                  key={name}
-                  onClick={() => toggleTool(name)}
-                  className="text-[11px] font-mono px-2 py-0.5 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                  title="Click to remove"
+                  key={t.id}
+                  onClick={() => pickCuratedTask(t)}
+                  disabled={isLoading}
+                  className={`group text-xs px-3 py-1.5 rounded-full border transition-colors max-w-md flex items-center gap-1.5
+                    ${active
+                      ? "border-blue-400 bg-blue-50 text-blue-800"
+                      : "bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50/40 text-gray-700"}`}
+                  title={t.summary || t.user_prompt}
                 >
-                  {name}
+                  {t.featured && <span className="text-amber-500" aria-label="Featured">★</span>}
+                  {t.id.startsWith("custom.") && (
+                    <span className="text-[9px] font-mono px-1 rounded bg-blue-100 text-blue-700">✎</span>
+                  )}
+                  <span className="truncate">{t.title}</span>
+                  {typeof t.verifier_count === "number" && t.verifier_count > 0 && (
+                    <span className="text-[10px] font-mono px-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                      ✓{t.verifier_count}
+                    </span>
+                  )}
                 </button>
-              ))}
-              {enabledTools.size === 0 && (
-                <span className="text-xs text-amber-600">No tools enabled — pick at least one below.</span>
-              )}
-            </div>
-
-            {!toolsCollapsed && (
-              <div className="border rounded-lg overflow-hidden">
-                <div className="px-2 py-1.5 bg-gray-50 border-b">
-                  <input
-                    value={toolFilter}
-                    onChange={e => setToolFilter(e.target.value)}
-                    placeholder="Filter tools…"
-                    className="w-full text-xs px-2 py-1 border rounded bg-white"
-                  />
-                </div>
-                <ul className="max-h-56 overflow-y-auto divide-y">
-                  {filteredTools.map(tool => (
-                    <li key={tool.name}>
-                      <label className="flex items-start gap-2 px-2.5 py-1.5 hover:bg-gray-50 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={enabledTools.has(tool.name)}
-                          onChange={() => toggleTool(tool.name)}
-                          className="mt-0.5"
-                        />
-                        <div className="min-w-0">
-                          <div className="text-xs font-mono text-gray-800">{tool.name}</div>
-                          <div className="text-[11px] text-gray-500 line-clamp-2">{tool.description}</div>
-                        </div>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex items-center justify-center gap-2 text-[11px] text-gray-500">
+            {hiddenChipCount > 0 && (
+              <button onClick={() => setShowAllTasks(true)} className="text-blue-600 hover:underline">
+                + {hiddenChipCount} more
+              </button>
+            )}
+            {(showAllTasks || filteredTasks.length > VISIBLE_CHIP_CAP) && (
+              <input
+                value={taskFilter}
+                onChange={e => setTaskFilter(e.target.value)}
+                placeholder="Filter…"
+                className="px-2 py-0.5 border rounded bg-white text-[11px]"
+              />
+            )}
+            {showAllTasks && (
+              <button onClick={() => setShowAllTasks(false)} className="text-gray-500 hover:underline">
+                show fewer
+              </button>
             )}
           </div>
+        </div>
+      )}
 
-          {/* DoM picker mirrors the LeftSidebar control — kept in sync via
-              the shared ``dom`` prop & ``onDomChange`` callback. */}
-          <div className="flex flex-wrap items-center gap-2 px-1">
-            <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Degree of MAS</span>
-            <div className="inline-flex flex-wrap gap-1 p-0.5 rounded-md border bg-white">
-              {DOM_OPTIONS.map(d => (
-                <button
-                  key={d.value}
-                  onClick={() => !isLoading && onDomChange(d.value)}
-                  disabled={isLoading}
-                  className={`px-2 py-1 text-[11px] rounded transition-colors ${
-                    dom === d.value ? "bg-blue-600 text-white" : "text-gray-600 hover:bg-gray-100"
-                  }`}
-                  title={d.hint || undefined}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
-            <span className="text-[11px] text-gray-500 flex-1 min-w-0">{DOM_HINTS[dom]}</span>
-          </div>
-
+      {/* ── Advanced: tool catalog (collapsed by default; mostly for
+          users who want to constrain which MCP tools the planner can use). */}
+      {domain && tools.length > 0 && (
+        <div className="text-center">
           <button
-            onClick={() => selectedTask && onSubmit(selectedTask, [...enabledTools], dom)}
-            disabled={!canSubmit}
-            className={`w-full py-2.5 rounded-lg font-medium text-sm transition
-              ${canSubmit
-                ? "bg-gradient-to-br from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-sm"
-                : "bg-gray-100 text-gray-400 cursor-not-allowed"}`}
+            onClick={() => setToolsExpanded(v => !v)}
+            className="text-[11px] text-gray-500 hover:text-blue-600 hover:underline"
           >
-            {isLoading ? "Designing plan…" : "Design enterprise plan"}
+            {toolsExpanded ? "Hide tool catalog" : `Advanced · choose tools (${tools.length} available)`}
           </button>
-        </>
+          {toolsExpanded && (
+            <div className="mt-2 text-left border rounded-lg overflow-hidden bg-white">
+              <div className="px-2 py-1.5 bg-gray-50 border-b flex items-center gap-2">
+                <input
+                  value={toolFilter}
+                  onChange={e => setToolFilter(e.target.value)}
+                  placeholder="Filter tools…"
+                  className="flex-1 text-xs px-2 py-1 border rounded bg-white"
+                />
+                <button
+                  onClick={() => setEnabledTools(new Set(tools.map(t => t.name)))}
+                  className="text-[11px] px-2 py-1 rounded border bg-white hover:bg-gray-50"
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setEnabledTools(new Set())}
+                  className="text-[11px] px-2 py-1 rounded border bg-white hover:bg-gray-50"
+                >
+                  None
+                </button>
+              </div>
+              <ul className="max-h-56 overflow-y-auto divide-y">
+                {filteredTools.map(tool => (
+                  <li key={tool.name}>
+                    <label className="flex items-start gap-2 px-2.5 py-1.5 hover:bg-gray-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enabledTools.has(tool.name)}
+                        onChange={() => toggleTool(tool.name)}
+                        className="mt-0.5"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-xs font-mono text-gray-800">{tool.name}</div>
+                        <div className="text-[11px] text-gray-500 line-clamp-2">{tool.description}</div>
+                      </div>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              <div className="px-2.5 py-1 border-t bg-gray-50 text-[11px] text-gray-500">
+                {enabledTools.size}/{tools.length} enabled
+                {!linkedToOracle && enabledTools.size === 0 && (
+                  <span className="ml-2 text-amber-600">(all tools will be enabled at submit if left empty)</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

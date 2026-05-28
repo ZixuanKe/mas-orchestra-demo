@@ -1,6 +1,6 @@
 export type AgentType =
   | "CoTAgent" | "SCAgent" | "DebateAgent" | "ReflexionAgent"
-  | "WebSearchAgent" | "CustomAgent"
+  | "WebSearchAgent" | "ExtractAgent" | "CustomAgent"
   | "MCPAgent" | "EnterpriseExecutorAgent";
 export type AgentStatus = "pending" | "running" | "completed" | "failed";
 export type DomLevel = "low" | "high" | "high_extensive";
@@ -17,6 +17,7 @@ export const AGENT_POOL: { type: string; description: string }[] = [
   { type: "DebateAgent", description: "Multiple agents debate to refine an answer." },
   { type: "ReflexionAgent", description: "Reflects on prior outputs to revise the answer." },
   { type: "WebSearchAgent", description: "Retrieves recent factual information from the web." },
+  { type: "ExtractAgent", description: "Pulls specific information (fields, numbers, dates, quotes) out of context — does not solve the task." },
 ];
 
 /** Agent types surfaced in the LeftSidebar legend when enterprise mode is
@@ -54,7 +55,7 @@ export function displayAgentType(a: AgentLike): string {
   if (a.type === "MCPAgent" && a.tool_name) return toolToAgentLabel(a.tool_name);
   return a.type;
 }
-export type Dataset = "aime" | "hotpot" | "browsecomp";
+export type Dataset = "aime" | "hotpot" | "browsecomp" | "masbench";
 export type Mode = "custom" | Dataset | "enterprise";
 export type ModeGroup = "reasoning" | "enterprise";
 export type Stage = "input" | "plan" | "execute" | "result";
@@ -64,6 +65,7 @@ export const DATASETS: { value: Dataset; label: string; dom: DomLevel }[] = [
   { value: "aime", label: "AIME 2024/2025 (Low)", dom: "low" },
   { value: "hotpot", label: "HotpotQA (High)", dom: "high" },
   { value: "browsecomp", label: "BrowseComp (High)", dom: "high" },
+  { value: "masbench", label: "MASBench (Extensive)", dom: "high_extensive" },
 ];
 
 export const MODES: { value: Mode; label: string }[] = [
@@ -71,6 +73,7 @@ export const MODES: { value: Mode; label: string }[] = [
   { value: "aime", label: "AIME 2024/2025" },
   { value: "hotpot", label: "HotpotQA" },
   { value: "browsecomp", label: "BrowseComp" },
+  { value: "masbench", label: "MASBench" },
   { value: "enterprise", label: "EnterpriseOps" },
 ];
 
@@ -80,9 +83,28 @@ export const SUBAGENT_MODELS: { value: SubagentModel; label: string }[] = [
   { value: "gpt-5.5", label: "GPT-5.5 (Best)" },
 ];
 
+/** Authenticated user profile returned by the backend after verifying
+ *  a Google ID token. Mirrors the JSON payload from POST /auth/google.
+ *  The full payload is cached in localStorage so the user stays
+ *  signed-in across reloads without an extra round-trip to Google. */
+export interface AuthUser {
+  sub: string;
+  email?: string;
+  name: string;
+  given_name?: string;
+  picture?: string;
+}
+
 export interface DatasetSample {
   question: string;
   answer: string;
+  /** MASBench only — reasoning family (breadth / combine / depth /
+   *  horizon / parallel / robustness). Empty for legacy datasets. */
+  axis?: string;
+  /** MASBench only — per-row complexity bucket (e.g. "10", "12").
+   *  Maps to the ``value`` column for most subsets and to
+   *  ``extra_info_json.depth`` for ``combine``. */
+  complexity?: string;
 }
 
 export interface MCPServer {
@@ -161,6 +183,12 @@ export interface ChatMessage {
   /** Non-fatal warning surfaced to the user (e.g. the vLLM planner failed
    *  and we degraded to a mock plan). Rendered as a yellow banner turn. */
   warning?: string;
+  /** User-supplied thumbs-up/down annotation on this assistant turn. The
+   *  annotation triggers a POST to /feedback/trajectory which persists
+   *  the whole conversation + configs into mas_refine for offline use. */
+  feedback?: "up" | "down" | null;
+  /** Optional free-form comment captured alongside the rating. */
+  feedbackComment?: string;
 }
 
 // ───────────────────────────────────────────── Enterprise mode
@@ -295,4 +323,7 @@ export interface ShareSnapshot {
   enabled_tools?: string[];
   sandbox_snapshot?: SandboxSnapshot | null;
   sandbox_diffs?: SandboxDiff[];
+  /** Google ``sub`` of the user who created this share. ``null`` for
+   *  guest shares. Drives the per-user history list on the sidebar. */
+  user_sub?: string | null;
 }

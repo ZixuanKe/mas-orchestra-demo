@@ -1,0 +1,39 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Node / Vite
+node_modules/
+dist/
+build/
+.vite/
+*.log
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Local runtime data (shares, feedback, snapshots)
+backend/data/shares/
+backend/data/feedback/
+
+# Auto-downloaded HF dataset cache (~70MB, regenerated on first /dataset/masbench hit)
+backend/data/masbench.json
+
+# Local dev helper scripts that contain secrets / per-machine tokens
+serve_ngrok.sh
+
+# NFS sillyrename lockfiles
+.nfs*

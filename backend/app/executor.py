@@ -68,6 +68,24 @@ def _supports_temperature(model: str) -> bool:
 
 COT_INSTRUCTION = "Please think step by step and then solve the task."
 
+EXTRACT_INSTRUCTION = (
+    "You are an extraction agent. Your ONLY job is to pull the requested "
+    "information out of the provided context and present it cleanly.\n\n"
+    "Rules:\n"
+    "1. Do NOT solve the original task — your output is consumed by another "
+    "agent that will do that.\n"
+    "2. Do NOT speculate, infer, or add facts that are not present in the "
+    "context. If a requested piece of information is missing, state "
+    "`not present in context` for that field.\n"
+    "3. Preserve numbers, dates, units, URLs, names and quoted strings "
+    "VERBATIM as they appear — no rounding, no paraphrasing.\n"
+    "4. Prefer a compact structured layout (key: value lines or a JSON "
+    "object) when the request mentions specific fields. Use a short "
+    "bullet list otherwise.\n"
+    "5. No prose explanations, no `Here is the extracted information:` "
+    "lead-ins — emit the extraction directly."
+)
+
 DEBATE_INITIAL_INSTRUCTION = COT_INSTRUCTION
 DEBATE_INSTRUCTION = (
     "Given solutions to the problem from other agents, consider their opinions as "
@@ -241,6 +259,25 @@ async def _execute_cot(agent: Agent, problem: str, ctx: dict[str, str], model: s
     override = agent.subagent_config.system_prompt if agent.subagent_config and agent.subagent_config.system_prompt else None
     system = override or f"You are a helpful assistant.\n\n{COT_INSTRUCTION}\n\nRole: {agent.description}"
     user = f"Original question: {problem}\n\nYour task: {task}"
+    return await _llm_call(system, user, model) or f"[{agent.id} returned empty response]"
+
+
+async def _execute_extract(agent: Agent, problem: str, ctx: dict[str, str], model: str) -> str:
+    """Pull specific information out of context without solving the task.
+
+    Behaves like a CoT call but with a system prompt that locks the agent
+    into pure extraction — no inference, no answer-synthesis. Use it as a
+    cheap normalizer after WebSearch / before reasoning agents, or to
+    isolate fields from a long upstream output. Mirrors CoTAgent's
+    plumbing so it accepts the same ``subagent_config`` overrides.
+    """
+    task = resolve_input(agent.input, problem, ctx)
+    override = agent.subagent_config.system_prompt if agent.subagent_config and agent.subagent_config.system_prompt else None
+    system = override or f"You are an extraction assistant.\n\n{EXTRACT_INSTRUCTION}\n\nRole: {agent.description}"
+    user = (
+        f"Original question (for context only — do NOT answer it):\n{problem}\n\n"
+        f"What to extract:\n{task}"
+    )
     return await _llm_call(system, user, model) or f"[{agent.id} returned empty response]"
 
 
@@ -674,6 +711,8 @@ async def execute_agent(
             return await _execute_reflexion(agent, problem, ctx, model)
         if agent.type == AgentType.WEBSEARCH:
             return await _execute_websearch(agent, problem, ctx, model)
+        if agent.type == AgentType.EXTRACT:
+            return await _execute_extract(agent, problem, ctx, model)
         if agent.type == AgentType.CUSTOM:
             return await _execute_custom(agent, problem, ctx, model)
         return await _execute_cot(agent, problem, ctx, model)
