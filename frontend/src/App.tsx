@@ -10,6 +10,7 @@ import { ShareModal } from "./components/ShareModal";
 import { ContactModal } from "./components/ContactModal";
 import { EnterprisePicker } from "./components/EnterprisePicker";
 import { SandboxPanel } from "./components/SandboxPanel";
+import { Tutorial, hasDismissedTutorial, type TutorialStep } from "./components/Tutorial";
 import type { Dataset, DomLevel, Mode, SubagentModel, CustomAgentConfig, SubagentConfig, Agent, AgentType, AgentState, Plan, ChatMessage } from "./types";
 import { AGENT_POOL, ENTERPRISE_AGENT_POOL, DATASETS, DOM_OPTIONS, MODES, SUBAGENT_MODELS, displayAgentType, toolToAgentLabel } from "./types";
 
@@ -66,6 +67,7 @@ function TopBar({
   canShare,
   onShare,
   onContact,
+  onTutorial,
   isShared,
   onExitShared,
 }: {
@@ -76,6 +78,7 @@ function TopBar({
   canShare: boolean;
   onShare: () => void;
   onContact: () => void;
+  onTutorial: () => void;
   isShared: boolean;
   onExitShared: () => void;
 }) {
@@ -133,6 +136,7 @@ function TopBar({
           <I.GitHub className="w-3.5 h-3.5" /> GitHub
         </a>
         <a href="https://arxiv.org/abs/2601.14652" target="_blank" rel="noopener noreferrer"
+          data-tutorial-id="paper"
           className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 px-2.5 py-1.5 rounded-md hover:bg-gray-100">
           <I.Paper className="w-3.5 h-3.5" /> Paper
         </a>
@@ -142,11 +146,20 @@ function TopBar({
         </a>
         <button
           onClick={onContact}
+          data-tutorial-id="contact"
           title="Send us comments, suggestions, or bug reports"
           className="flex items-center gap-1.5 text-xs text-pink-700 hover:text-pink-900 hover:bg-pink-50/70 px-2.5 py-1.5 rounded-md font-medium border border-pink-200/60 bg-pink-50/30"
         >
           <span className="text-sm leading-none">💌</span>
           Contact us
+        </button>
+        <button
+          onClick={onTutorial}
+          title="Re-launch the guided tour"
+          className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-gray-900 px-2.5 py-1.5 rounded-md hover:bg-gray-100"
+        >
+          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-gray-400 text-[10px] font-semibold leading-none">?</span>
+          Tour
         </button>
         {showGraphToggle && (
           <button onClick={onToggleRight} className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500" title="Toggle graph panel">
@@ -331,7 +344,7 @@ function LeftSidebar({
         <span>New chat</span>
       </button>
 
-      <div>
+      <div data-tutorial-id="reasoning">
         <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Reasoning</div>
         <div className="space-y-1">
           {MODES.filter(m => m.value !== "enterprise").map(m => (
@@ -350,7 +363,7 @@ function LeftSidebar({
         </div>
       </div>
 
-      <div>
+      <div data-tutorial-id="enterprise">
         <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Enterprise</div>
         <div className="space-y-1">
           <label className={`flex items-center gap-2 text-sm ${disabled ? "opacity-50" : "cursor-pointer"}`}>
@@ -369,7 +382,7 @@ function LeftSidebar({
       </div>
 
       {(mode === "custom" || mode === "enterprise") && (
-        <div>
+        <div data-tutorial-id="dom">
           <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Degree of MAS</div>
           <div className="inline-flex flex-wrap gap-1 p-0.5 rounded-md border bg-white">
             {DOM_OPTIONS.map(d => (
@@ -394,7 +407,7 @@ function LeftSidebar({
         </div>
       )}
 
-      <div>
+      <div data-tutorial-id="subagent">
         <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2">Sub-agent model</div>
         <Dropdown<SubagentModel>
           value={subagentModel}
@@ -403,7 +416,7 @@ function LeftSidebar({
         />
       </div>
 
-      <details className="group" open={mode === "enterprise"}>
+      <details className="group" open={mode === "enterprise"} data-tutorial-id="agent-types">
         <summary className="flex items-center justify-between cursor-pointer list-none text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-2 select-none">
           <span>Agent types {mode === "enterprise" ? "(enterprise)" : ""}</span>
           <I.Chev className="w-3 h-3 text-gray-400 transition-transform group-open:rotate-90" />
@@ -447,8 +460,12 @@ function LeftSidebar({
       </div>
 
       {/* Account widget pinned to the sidebar bottom (ChatGPT-style).
-          Shows "Guest" until the user signs in with Google. */}
-      <AuthPanel auth={auth} />
+          Shows "Guest" until the user signs in with Google. Wrapped
+          so the tutorial spotlight has a stable anchor regardless of
+          AuthPanel internals (button vs. signed-in profile pill). */}
+      <div data-tutorial-id="login">
+        <AuthPanel auth={auth} />
+      </div>
     </div>
   );
 }
@@ -2000,6 +2017,85 @@ function RightSidebar({
 }
 
 /* ────────────────────────────────────────────────────────────────
+   Tutorial — 7-step guided tour of the demo's core surfaces.
+
+   Step order is "left-to-right, top-to-bottom" through the UI so a
+   new user reads it as a coherent narrative: pick a task (reasoning
+   or enterprise) → tune the planner (DoM + sub-agent model) →
+   manage your account (login, history) → talk back to us (feedback,
+   paper). Targets are looked up via ``data-tutorial-id`` attributes
+   so we don't couple to brittle class names or DOM trees.
+   ──────────────────────────────────────────────────────────────── */
+const TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    id: "reasoning",
+    title: "Reasoning tasks",
+    body: "Pick a built-in benchmark (AIME math, HotpotQA, BrowseComp, MASBench) or write your own custom problem. The planner designs a multi-agent graph for whichever you choose, then runs it for you.",
+    targetSelector: '[data-tutorial-id="reasoning"]',
+    prefer: "right",
+  },
+  {
+    id: "enterprise",
+    title: "Enterprise tasks",
+    body: "Pick a domain (Calendar, HR, Email, Teams, ServiceNow, …) and let LLM-powered tool-using agents work on a real Dockerized sandbox. The 5th column shows the sandbox state changing in real time as agents call tools.",
+    targetSelector: '[data-tutorial-id="enterprise"]',
+    prefer: "right",
+  },
+  {
+    id: "dom",
+    title: "Degree of MAS",
+    body: "How elaborate should the multi-agent graph be? Low = a single agent solving directly; High = a small multi-agent system; Extensive = a deep parallel/diamond DAG with verification. Visible for custom and enterprise tasks — built-in benchmarks pin their own trained level.",
+    targetSelector: '[data-tutorial-id="dom"]',
+    prefer: "right",
+  },
+  {
+    id: "subagent",
+    title: "Sub-agent model",
+    body: "Which LLM each sub-agent in the graph uses (GPT-4.1 mini, 5.4 mini, 5.5, …). The meta-orchestrator that designs the graph is a separate trained vLLM — this dropdown only affects the workers it spawns.",
+    targetSelector: '[data-tutorial-id="subagent"]',
+    prefer: "right",
+  },
+  {
+    id: "agent-types",
+    title: "Agent types",
+    body: "Every box in the multi-agent graph is one of these agent types — each is a different reasoning pattern the planner can pick. CoT thinks step-by-step, SC samples multiple paths and majority-votes, Debate has multiple roles argue, Reflexion self-critiques and revises, Extract pulls specific fields out of context. In enterprise mode this list switches to MCPAgent variants (each wrapping one real tool).",
+    targetSelector: '[data-tutorial-id="agent-types"]',
+    prefer: "right",
+    // The agent-types panel is a <details> element collapsed by
+    // default in reasoning mode. Pre-expand it programmatically so
+    // the user actually sees the agent list while reading the
+    // explanation; without this the spotlight would just cover the
+    // single "Agent types ▸" summary row.
+    onEnter: () => {
+      const el = document.querySelector('[data-tutorial-id="agent-types"]') as HTMLDetailsElement | null;
+      if (el && !el.open) el.open = true;
+    },
+  },
+  {
+    id: "login",
+    title: "Sign in (optional)",
+    body: "Sign in with Google to keep a personal history of your conversations (auto-saved in the sidebar), and to attach your name to any feedback you send us. Stay signed-out and you'll be a Guest — everything still works.",
+    targetSelector: '[data-tutorial-id="login"]',
+    prefer: "right",
+  },
+  {
+    id: "contact",
+    title: "Contact us",
+    body: "Spotted a bug? Have a feature idea? Curious about a result? Tell us — it lands in the development team's inbox. We read everything.",
+    targetSelector: '[data-tutorial-id="contact"]',
+    prefer: "bottom",
+  },
+  {
+    id: "paper",
+    title: "Paper",
+    body: "Read the MAS-Orchestra paper to understand how the meta-orchestrator was trained, what the benchmarks measure, and why DoM matters. Includes ablations and links to the open-source training code.",
+    targetSelector: '[data-tutorial-id="paper"]',
+    prefer: "bottom",
+  },
+];
+
+
+/* ────────────────────────────────────────────────────────────────
    App shell
    ──────────────────────────────────────────────────────────────── */
 export default function App() {
@@ -2029,6 +2125,26 @@ export default function App() {
   const [expandedGraph, setExpandedGraph] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [contactOpen, setContactOpen] = useState(false);
+
+  // First-visit guided tour. Auto-launches once if the user hasn't
+  // dismissed it. The Help (Tour) button in the TopBar re-opens it
+  // on demand regardless of the dismissed flag — re-launching is the
+  // only safe way to escape from a stale ``Don't show again`` choice
+  // (e.g. after a major UI change the user wants to re-discover).
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  useEffect(() => {
+    // Only auto-launch for never-shown users AND only when not in
+    // shared-view mode (the read-only ?share=… landing is its own
+    // self-contained experience and a tour would obscure it).
+    const url = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    if (url?.has("share")) return;
+    if (!hasDismissedTutorial()) {
+      // Wait one tick so the initial paint finishes and getBoundingClientRect
+      // returns real values for the targets.
+      const t = window.setTimeout(() => setTutorialOpen(true), 400);
+      return () => window.clearTimeout(t);
+    }
+  }, []);
 
   // Auth context — kept here (not inside LeftSidebar) so future work
   // can attach the signed-in user's profile to trajectory annotations,
@@ -2365,8 +2481,21 @@ export default function App() {
         canShare={canShare}
         onShare={() => setShareOpen(true)}
         onContact={() => setContactOpen(true)}
+        onTutorial={() => {
+          // Make sure the sidebar is open so the four sidebar
+          // anchors are actually in the DOM when the tour reads
+          // their bounding boxes.
+          setLeftOpen(true);
+          setTutorialOpen(true);
+        }}
         isShared={isShared}
         onExitShared={exitSharedMode}
+      />
+
+      <Tutorial
+        steps={TUTORIAL_STEPS}
+        open={tutorialOpen}
+        onClose={() => setTutorialOpen(false)}
       />
 
       <ShareModal
